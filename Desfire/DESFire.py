@@ -51,6 +51,70 @@ class DESFire:
         decrypted = [b for b in (k.decrypt(bytes(response)))]
         import pdb ; pdb.set_trace()
 
+
+    def authenticate(self, key_id, key_optionen):
+        """Hacked together Android only DESFire authentication.
+        Desfire supports multiple authentication modes, but this does on triple-DES (TDES, 3DES).
+        Here we use legacy authentication (0xa0). After calling this function the :py:class:`DESFire` object is authenticated and will decrypt the future responses using the session key.
+        .. warn ::
+            This authentication is not a safe and just for demostration purposes.
+        More info
+        * https://github.com/jekkos/android-hce-desfire/blob/master/hceappletdesfire/src/main/java/net/jpeelaer/hce/desfire/DesFireInstruction.java
+        * http://stackoverflow.com/questions/14117025/des-send-and-receive-modes-for-desfire-authentication
+        :param key_id: One of 0-16 keys stored the card as a byte
+        :param private_key: 16 bytes of private key
+        :return: session key, 8 bytes
+        """
+
+        commandb=0
+        switcher={
+            DESFireKeyType['DF_KEY_AES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_AES'].value,
+            DESFireKeyType.['DF_KEY_2K3DES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_ISO'].value,
+            DESFireKeyType.['DF_KEY_2K3DES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_ISO'].value
+        }
+
+        apdu_command = self.wrap_command(switcher.get(key_optionen.key_type), [key_id])
+        resp = self.communicate(apdu_command, "Authenticating key {:02X}".format(key_id), allow_continue_fallthrough=True)
+
+        # We get 8 bytes challenge
+        random_b_encrypted = list(resp)
+        assert (len(random_b_encrypted) == 8 || len(random_b_encrypted) == 16 )
+
+        initial_value = b"\00" * 8
+        k = pyDes.triple_des(bytes(private_key), pyDes.CBC, initial_value, pad=None, padmode=pyDes.PAD_NORMAL)
+
+        decrypted_b = [b for b in (k.decrypt(bytes(random_b_encrypted)))]
+
+        # shift randB one byte left and get randB'
+        shifted_b = decrypted_b[1:8] + [decrypted_b[0]]
+
+        # Generate random_a
+        # NOT A REAL RANDOM NUMBER AND NOT IV XORRED
+        random_a = b"\00" * 8
+
+        decrypted_a = [b for b in k.decrypt(bytes(random_a))]
+
+        xorred = []
+
+        for i in range(0, 8):
+            xorred.append(decrypted_a[i] ^ shifted_b[i])
+
+        decrypted_xorred = [b for b in k.decrypt(bytes(xorred))]
+
+        final_bytes = decrypted_a + decrypted_xorred
+        assert len(final_bytes) == 16
+
+        apdu_command = self.wrap_command(0xaf, final_bytes)
+        resp = self.communicate(apdu_command, "Authenticating continues with key {:02X}".format(key_id))
+
+        assert len(resp) == 8
+
+        self.logger.info("Received session key %s", byte_array_to_human_readable_hex(resp))
+
+        self.session_key = resp
+
+        return resp
+ 
     def communicate(self, apdu_cmd, description,nativ=False, allow_continue_fallthrough=False):
         """Communicate with a NFC tag.
         Send in outgoing request and waith for a card reply.
