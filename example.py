@@ -65,6 +65,7 @@ class MyObserver(CardObserver):
             desfire = DESFire(PCSCDevice(connection.component))
             key_setting=desfire.get_key_setting()
             print(key_setting)
+            desfire.authenticate(0,key_setting)
             #applications = desfire.get_applications()
             #for app_id in applications:
             #    logger.info("Found application 0x%06x", app_id)

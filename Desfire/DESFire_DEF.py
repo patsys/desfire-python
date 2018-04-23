@@ -151,16 +151,18 @@ class DESFireKeySettings(Enum):
 
 
 class DESFireKeySet:
-     master=DESFireKeySettings['KS_FACTORY_DEFAULT']
-     change=DESFireKeySettings['KS_FACTORY_DEFAULT']
+     master=DESFireKeySettings.KS_FACTORY_DEFAULT
+     change=DESFireKeySettings.KS_FACTORY_DEFAULT
      def __repr__(self):
          return 'master:' + master.name + "\nchange:" + change.name
 
 class DESFireKeyOpt:
      key_size   = 0
+     key=b''
      block_size = 0
      version   = 0
-     key_type  = DESFireKeyType['DF_KEY_INVALID']
+     iv=b''
+     key_type  = DESFireKeyType.DF_KEY_INVALID
      key_settings = 0 
      def list_human_key_settings(self):
          settings=[]
@@ -168,6 +170,16 @@ class DESFireKeyOpt:
              if (self.key_settings & (1 << i)) != 0:
                  settings.append(DESFireKeySettings(1 << i).name)
          return settings
+
+     def iv_null(self):
+         self.iv=b"\00" * 8
+
+     def set_default_key_not_set(self):
+         if self.key == b'':
+            if self.key_type == DESFireKeyType.DF_KEY_2K3DES:
+                self.key=b'\00' * 16
+            else:
+                self.key=b'\00' * 24
 
      def __repr__(self):
          return 'keysize:' + str(self.key_size) + "\nblock_size:" + str(self.block_size) + "\nversion:" + str(self.version) + "\nkey_type:" + self.key_type.name + "\n" + "key_settings:" + str(self.list_human_key_settings())

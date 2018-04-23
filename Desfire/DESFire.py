@@ -1,8 +1,10 @@
 from __future__ import print_function
 
+import json
 import logging
 import time
 
+import random
 import pyDes
 from .device import Device
 from .DESFire_DEF import *
@@ -52,7 +54,7 @@ class DESFire:
         import pdb ; pdb.set_trace()
 
 
-    def authenticate(self, key_id, key_optionen):
+    def authenticate(self, key_id, key_option):
         """Hacked together Android only DESFire authentication.
         Desfire supports multiple authentication modes, but this does on triple-DES (TDES, 3DES).
         Here we use legacy authentication (0xa0). After calling this function the :py:class:`DESFire` object is authenticated and will decrypt the future responses using the session key.
@@ -68,20 +70,21 @@ class DESFire:
 
         commandb=0
         switcher={
-            DESFireKeyType['DF_KEY_AES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_AES'].value,
-            DESFireKeyType.['DF_KEY_2K3DES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_ISO'].value,
-            DESFireKeyType.['DF_KEY_2K3DES'].value: DESFire_DEF['DFEV1_INS_AUTHENTICATE_ISO'].value
+            DESFireKeyType.DF_KEY_AES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_AES.value,
+            DESFireKeyType.DF_KEY_2K3DES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_ISO.value,
+            DESFireKeyType.DF_KEY_2K3DES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_ISO.value
         }
 
-        apdu_command = self.wrap_command(switcher.get(key_optionen.key_type), [key_id])
-        resp = self.communicate(apdu_command, "Authenticating key {:02X}".format(key_id), allow_continue_fallthrough=True)
+        print("command:",key_option.key_type.value,":",switcher.get(key_option.key_type.value))
+        apdu_command = self.command(switcher.get(key_option.key_type.value), [key_id])
+        resp = self.communicate(apdu_command, "Authenticating key {:02X}".format(key_id),True, allow_continue_fallthrough=True)
 
         # We get 8 bytes challenge
         random_b_encrypted = list(resp)
-        assert (len(random_b_encrypted) == 8 || len(random_b_encrypted) == 16 )
-
-        initial_value = b"\00" * 8
-        k = pyDes.triple_des(bytes(private_key), pyDes.CBC, initial_value, pad=None, padmode=pyDes.PAD_NORMAL)
+        assert (len(random_b_encrypted) == 8 )
+        key_option.set_default_key_not_set()
+        key_option.iv_null()
+        k = pyDes.triple_des(key_option.key, pyDes.CBC, key_option.iv, pad=None, padmode=pyDes.PAD_NORMAL)
 
         decrypted_b = [b for b in (k.decrypt(bytes(random_b_encrypted)))]
 
@@ -89,8 +92,8 @@ class DESFire:
         shifted_b = decrypted_b[1:8] + [decrypted_b[0]]
 
         # Generate random_a
-        # NOT A REAL RANDOM NUMBER AND NOT IV XORRED
-        random_a = b"\00" * 8
+        #NOT IV XORRED
+        random_a = bytearray(random.getrandbits(8) for i in range(8))
 
         decrypted_a = [b for b in k.decrypt(bytes(random_a))]
 
@@ -104,8 +107,8 @@ class DESFire:
         final_bytes = decrypted_a + decrypted_xorred
         assert len(final_bytes) == 16
 
-        apdu_command = self.wrap_command(0xaf, final_bytes)
-        resp = self.communicate(apdu_command, "Authenticating continues with key {:02X}".format(key_id))
+        apdu_command = self.command(DESFire_DEF.DF_INS_ADDITIONAL_FRAME.value, final_bytes)
+        resp = self.communicate(apdu_command, "Authenticating continues with key {:02X}".format(key_id),True)
 
         assert len(resp) == 8
 
@@ -180,8 +183,13 @@ class DESFire:
             return [0x90,command,0x00,0x00,0x00]
 
     @classmethod
-    def command(command):
-        return [command]
+    def command(cls,command,parameters=None):
+        if parameters:
+            l=[command]
+            l=l+parameters
+            return l 
+        else:
+            return [command]
 
 
     def shift_bytes(self, resp,count):
