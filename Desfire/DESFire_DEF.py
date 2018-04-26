@@ -1,5 +1,16 @@
 from enum import Enum
-class DESFire_DEF(Enum):
+import struct
+from Crypto.Cipher import DES, DES3, AES
+from Crypto import Random
+from .util import *
+
+def chunks(data, n):
+    i = 0
+    while i < len(data):
+        yield data[i:i+n]
+        i += n
+
+class DESFireCommand(Enum):
      MAX_FRAME_SIZE         =60 # The maximum total length of a packet that is transfered to / from the card
 
 #------- Desfire legacy instructions --------
@@ -156,30 +167,169 @@ class DESFireKeySet:
      def __repr__(self):
          return 'master:' + master.name + "\nchange:" + change.name
 
-class DESFireKeyOpt:
-     key_size   = 0
-     key=b''
-     block_size = 0
-     version   = 0
-     iv=b''
-     key_type  = DESFireKeyType.DF_KEY_INVALID
-     key_settings = 0 
-     def list_human_key_settings(self):
-         settings=[]
-         for i in range(0,16):
-             if (self.key_settings & (1 << i)) != 0:
-                 settings.append(DESFireKeySettings(1 << i).name)
-         return settings
+class DESFireKey():
+    def __init__(self):
+        self.keyType = None
+        self.keyBytes = None
+        self.keySize = 0
+        self.keyVersion = 0
 
-     def iv_null(self):
-         self.iv=b"\00" * 8
+        self.IV = None
+        self.Cipher = None
+        self.CipherBlocksize = None
 
-     def set_default_key_not_set(self):
-         if self.key == b'':
-            if self.key_type == DESFireKeyType.DF_KEY_2K3DES:
-                self.key=b'\00' * 16
+        self.Cmac1 = None
+        self.Cmac2 = None
+        self.keySettings = 0
+        self.keyNumbers = 0
+
+
+    def listHumanKeySettings(self):
+        settings=[]
+        for i in range(0,16):
+            if (self.keySettings & (1 << i)) != 0:
+                settings.append(DESFireKeySettings(1 << i).name)
+        return settings
+
+    def ClearIV(self):
+        self.IV=b"\00" * self.CipherBlocksize
+    
+    def CiperInit(self):
+        if self.keySize == 0:
+            if self.keyBytes == None:
+                self.keySize=16
             else:
-                self.key=b'\00' * 24
+                self.keySize=len(self.keyBytes)
+        self.setDefaultKeyNotSet()
+        if self.CipherBlocksize == None:
+            self.CipherBlocksize=self.keySize
+        #todo assert on key length!
+        if self.keyType == DESFireKeyType.DF_KEY_AES:
+            #AES is used
+            assert self.keySize == 16
+            self.CipherBlocksize = 16
+            self.ClearIV()
+            self.Cipher = AES.new(bytes(self.keyBytes), AES.MODE_CBC, bytes(self.IV))
 
-     def __repr__(self):
-         return 'keysize:' + str(self.key_size) + "\nblock_size:" + str(self.block_size) + "\nversion:" + str(self.version) + "\nkey_type:" + self.key_type.name + "\n" + "key_settings:" + str(self.list_human_key_settings())
+        elif self.keyType == DESFireKeyType.DF_KEY_2K3DES:
+        #DES is used
+            if self.keySize == 8:
+                self.CipherBlocksize = 8
+                self.ClearIV()
+                self.Cipher = DES.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
+        #2DES is used (3DES with 2 keys only)
+            elif self.keySize == 16:
+                self.CipherBlocksize = 8
+                self.ClearIV()
+                self.Cipher = DES3.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
+
+            else:
+                raise Exception('Key length error!')
+                        
+        elif self.keyType == DESFireKeyType.DF_KEY_3K3DES:
+            assert self.keySize == 24
+            #3DES is used
+            self.CipherBlocksize = 8
+            self.ClearIV()
+            self.Cipher = DES3.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
+
+        else:
+            raise Exception('Unknown key type!')
+       
+
+    def setDefaultKeyNotSet(self):
+        if self.keyBytes == None:
+            self.keyBytes=b'\00' * self.keySize
+
+    def GetKeyType(self):
+        return self.keyType
+    
+    def setKey(self,key):
+        self.keyBytes=key
+
+    def setKeySettings(self,keyNumbers,keyType,keySettings):
+        self.keyNumbers=keyNumbers
+        self.keyType=keyType
+        self.keySettings=keySettings
+
+    def PaddedEncrypt(self, data):
+        padsize = 0
+        m = len(data) % self.CipherBlocksize
+        if m != 0:
+            if len(data) < self.CipherBlocksize:
+                padsize = m
+            else:
+                padsize = (((len(data)/self.CipherBlocksize)+1)*self.CipherBlocksize) - len(data)
+        return self.Encrypt(data + '\x00'*padsize)
+
+    def Encrypt(self, data):
+        #todo assert on blocksize
+        result = []
+        for block in chunks(data, self.CipherBlocksize):
+            self.IV = data[-self.CipherBlocksize:]
+            #print 'Block: ' + block.encode('hex')
+            #print 'Block (xor): ' + block_xor.encode('hex')
+            block= self.Cipher.encrypt(bytes(block))
+            #print 'Block (dec): ' + block_dec.encode('hex')
+            result+= block
+        return result
+
+    def Decrypt(self, dataEnc):
+        #todo assert on blocksize
+        result = []
+        block_dec = self.Cipher.decrypt(bytes(dataEnc))
+        self.IV = block_dec[-self.CipherBlocksize:]
+        result+=block_dec
+        return result
+
+
+    #Generates the two subkeys mu8_Cmac1 and mu8_Cmac2 that are used for CMAC calulation with the session key
+    def GenerateCmacSubkeys(self):
+       ### THIS PART IS NOT WORKING CORRECTLY!!!
+       R = 0x87
+       if self.CipherBlocksize == 8:
+               R = 0x1B
+
+       data = [0x00] *16
+       self.ClearIV()
+       data = self.Decrypt(data)
+       #print 'Before: ' + data.encode('hex')
+       self.Cmac1 =  BitShiftLeft(data,self.CipherBlocksize)
+       if (data[0] & 0x80):
+           t = hex2int(self.Cmac1[-1]) ^ R
+           self.Cmac1 = self.Cmac1[:-1] + int2hex(t)
+
+       self.Cmac2 =  BitShiftLeft(self.Cmac1,self.CipherBlocksize)
+       if (self.Cmac1[0] & 0x80):
+           t = hex2int(self.Cmac2[-1]) ^ R
+           self.Cmac2 = self.Cmac2[:-1] + int2hex(t)
+
+       #print  'Cmac1: ' + self.Cmac1.encode('hex').upper()
+       #print  'Cmac2: ' + self.Cmac2.encode('hex').upper()
+
+
+    #Calculate the CMAC (Cipher-based Message Authentication Code) from the given data.
+    #The CMAC is the initialization vector (IV) after a CBC encryption of the given data.
+    def CalculateCmac(self, data):
+        # If the data length is not a multiple of the block size -> pad the buffer with 80,00,00,00,....
+        ### THIS PART IS NOT WORKING CORRECTLY!!!
+        cmac = ''
+        #print data.encode('hex')
+        padsize = calcPadSize(data, self.CipherBlocksize)
+        #print padsize
+        if padsize != 0:
+            data += '\x80' + '\x00'*(padsize-1)
+            #print data.encode('hex')
+            cmac = XOR(data, self.Cmac2)
+        else:
+            #print data.encode('hex')
+            cmac = XOR(data, self.Cmac1)
+
+        #print cmac.encode('hex')
+
+        cmac_enc = self.Decrypt(cmac)
+        self.IV = cmac_enc
+        return cmac_enc
+
+    def __repr__(self):
+        return 'keyNumbers:'+ str(self.keyNumbers) + 'keySize:' + str(self.keySize)  + "\nversion:" + str(self.keyVersion) + "\nkeyType:" + self.keyType.name + "\n" + "keySettings:" + str(self.listHumanKeySettings())

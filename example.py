@@ -63,7 +63,7 @@ class MyObserver(CardObserver):
             # directly
             logger.info("Opened connection %s", connection.component)
             desfire = DESFire(PCSCDevice(connection.component))
-            key_setting=desfire.get_key_setting()
+            key_setting=desfire.getKeySetting()
             print(key_setting)
             desfire.authenticate(0,key_setting)
             #applications = desfire.get_applications()

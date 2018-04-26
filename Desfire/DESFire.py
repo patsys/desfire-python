@@ -17,18 +17,21 @@ class DESFireCommunicationError(Exception):
     The exception message is human readable translation of the error code if available. The ``status_code`` carries the original status word error byte.
     """
 
+
     def __init__(self, msg, status_code):
         super(DESFireCommunicationError, self).__init__(msg)
         self.status_code = status_code
 
 class DESFire:
+    isAuthenticated = False
+    
     def __init__(self, device, logger=None):
         """
         :param device: :py:class:`desfire.device.Device` implementation
         :param logger: Python :py:class:`logging.Logger` used for logging output. Overrides the default logger. Extensively uses ``INFO`` logging level.
         """
 
-        assert isinstance(device, Device), "Not a compatible device instance: {}".format(device)
+        #assert isinstance(device, Device), "Not a compatible device instance: {}".format(device)
 
         self.device = device
 
@@ -53,71 +56,105 @@ class DESFire:
         decrypted = [b for b in (k.decrypt(bytes(response)))]
         import pdb ; pdb.set_trace()
 
-
-    def authenticate(self, key_id, key_option):
-        """Hacked together Android only DESFire authentication.
-        Desfire supports multiple authentication modes, but this does on triple-DES (TDES, 3DES).
-        Here we use legacy authentication (0xa0). After calling this function the :py:class:`DESFire` object is authenticated and will decrypt the future responses using the session key.
-        .. warn ::
-            This authentication is not a safe and just for demostration purposes.
-        More info
-        * https://github.com/jekkos/android-hce-desfire/blob/master/hceappletdesfire/src/main/java/net/jpeelaer/hce/desfire/DesFireInstruction.java
-        * http://stackoverflow.com/questions/14117025/des-send-and-receive-modes-for-desfire-authentication
-        :param key_id: One of 0-16 keys stored the card as a byte
-        :param private_key: 16 bytes of private key
-        :return: session key, 8 bytes
+    def authenticate(self, key_id, key, challenge = None):
+        """Does authentication to the currently selected application with keyid (key_id)
+        Authentication is NEVER needed to call this function.
+        Args:
+                key_id  (int)         : Key number
+                key (DESFireKey)      : The key used for authentication
+                challenge (DESFireKey): The challenge supplied by the reader to the card on the challenge-response authentication. 
+                                                                It will determine half of the session Key bytes (optional)
+                                                                It's there for testing and crypto thiunkering purposes
+        
+        Returns:
+                DESFireKey : the session key used for future communications with the card in the same session
         """
+        self.logger.debug('Authenticating')
+        self.isAuthenticated = False
+        cmd = None
+        keyType = key.GetKeyType()
+        if keyType == DESFireKeyType.DF_KEY_AES:
+            cmd = DESFireCommand.DFEV1_INS_AUTHENTICATE_AES.value
+            params = [ key_id ]
+        elif keyType == DESFireKeyType.DF_KEY_2K3DES or keyType == DESFireKeyType.DF_KEY_3K3DES:
+            cmd = DESFireCommand.DFEV1_INS_AUTHENTICATE_ISO.value
+            params = [ key_id ]
+        else:
+            raise Exception('Invalid key type!')
 
-        commandb=0
-        switcher={
-            DESFireKeyType.DF_KEY_AES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_AES.value,
-            DESFireKeyType.DF_KEY_2K3DES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_ISO.value,
-            DESFireKeyType.DF_KEY_2K3DES.value: DESFire_DEF.DFEV1_INS_AUTHENTICATE_ISO.value
-        }
+        raw_data = self.communicate(self.command(cmd,params),"Authenticating key {:02X}".format(key_id),True, allow_continue_fallthrough=True)
+        RndB_enc = raw_data
+        self.logger.debug( 'Random B (enc):'+ byte_array_to_human_readable_hex(RndB_enc))
+        if keyType == DESFireKeyType.DF_KEY_3K3DES or keyType == DESFireKeyType.DF_KEY_AES:
+            if len(RndB_enc) != 16:
+                raise DESFireAuthException('Card expects a different key type. (enc B size is less than the blocksize of the key you specified)')
 
-        print("command:",key_option.key_type.value,":",switcher.get(key_option.key_type.value))
-        apdu_command = self.command(switcher.get(key_option.key_type.value), [key_id])
-        resp = self.communicate(apdu_command, "Authenticating key {:02X}".format(key_id),True, allow_continue_fallthrough=True)
+        key.CiperInit()
+        RndB = key.Decrypt(RndB_enc)
+        self.logger.debug( 'Random B (dec): ' + byte_array_to_human_readable_hex(RndB))
+        RndB_rot = RndB[1:]+[RndB[0]]
+        self.logger.debug( 'Random B (dec, rot): ' + byte_array_to_human_readable_hex(RndB_rot))
 
-        # We get 8 bytes challenge
-        random_b_encrypted = list(resp)
-        assert (len(random_b_encrypted) == 8 )
-        key_option.set_default_key_not_set()
-        key_option.iv_null()
-        k = pyDes.triple_des(key_option.key, pyDes.CBC, key_option.iv, pad=None, padmode=pyDes.PAD_NORMAL)
+        if challenge != None:
+            RndA = challenge
+        else:
+            RndA = Random.get_random_bytes(len(RndB))
+        self.logger.debug( 'Random A: ' + byte_array_to_human_readable_hex(RndA))
+        RndAB = list(RndA) + RndB_rot
+        self.logger.debug( 'Random AB: ' + byte_array_to_human_readable_hex(RndAB))
+        RndAB_enc = key.Encrypt(RndAB)
+        self.logger.debug( 'Random AB (enc): ' + byte_array_to_human_readable_hex(RndAB_enc))
 
-        decrypted_b = [b for b in (k.decrypt(bytes(random_b_encrypted)))]
+        params = RndAB_enc 
+        cmd = DESFireCommand.DF_INS_ADDITIONAL_FRAME.value
+        raw_data = self.communicate(self.command(cmd,params),"Authenticating random {:02X}".format(key_id),True, allow_continue_fallthrough=True)
+        #raw_data = hexstr2bytelist('91 3C 6D ED 84 22 1C 41')
+        RndA_enc = raw_data
+        self.logger.debug('Random A (enc): ' + byte_array_to_human_readable_hex(RndA_enc))
+        RndA_dec = key.Decrypt(RndA_enc)
+        self.logger.debug( 'Random A (dec): ' + byte_array_to_human_readable_hex(RndA_dec))
+        RndA_dec_rot = RndA_dec[-1:] + RndA_dec[0:-1] 
+        self.logger.debug( 'Random A (dec, rot): ' + byte_array_to_human_readable_hex(RndA_dec_rot))
 
-        # shift randB one byte left and get randB'
-        shifted_b = decrypted_b[1:8] + [decrypted_b[0]]
+        if bytes(RndA) != bytes(RndA_dec_rot):
+            raise Exception('Authentication FAILED!')
 
-        # Generate random_a
-        #NOT IV XORRED
-        random_a = bytearray(random.getrandbits(8) for i in range(8))
+        self.logger.debug( 'Authentication succsess!')
+        self.isAuthenticated = True
+        self.lastAuthKeyNo = key_id
 
-        decrypted_a = [b for b in k.decrypt(bytes(random_a))]
+        self.logger.debug( 'Calculating Session key')
+        RndA = list(RndA)
+        sessionKeyBytes  = RndA[:4]
+        sessionKeyBytes += RndB[:4]
 
-        xorred = []
+        if key.keySize > 8:
+            if keyType == DESFireKeyType.DF_KEY_2K3DES:
+                sessionKeyBytes += RndA[4:8]
+                sessionKeyBytes += RndB[4:8]
+            elif keyType == DESFireKeyType.DF_KEY_3K3DES:
+                sessionKeyBytes += RndA[6:10]
+                sessionKeyBytes += RndB[6:10]
+                sessionKeyBytes += RndA[12:16]
+                sessionKeyBytes += RndB[12:16]
+            elif keyType == DESFireKeyType.DF_KEY_AES:
+                sessionKeyBytes += RndA[12:16]
+                sessionKeyBytes += RndB[12:16]
 
-        for i in range(0, 8):
-            xorred.append(decrypted_a[i] ^ shifted_b[i])
+        #if keyType == DESFireKeyType.DF_KEY_2K3DES or keyType == DESFireKeyType.DF_KEY_3K3DES:
+        #    sessionKeyBytes = intlist2hex([a & 0b11111110 for a in hex2bytelist(sessionKeyBytes)])
+    
+        ## now we have the session key, so we reinitialize the crypto!!!
+        key.setKey(sessionKeyBytes)
+        key.CiperInit()
+        key.GenerateCmacSubkeys()
 
-        decrypted_xorred = [b for b in k.decrypt(bytes(xorred))]
+        self.logger.debug( 'Cmac1: ' + sessionKey.Cmac1.encode('hex').upper())
+        self.logger.debug( 'Cmac2: ' + sessionKey.Cmac2.encode('hex').upper())
+        self.logger.debug( 'sessionKey: ' + sessionKey.keyBytes.encode('hex').upper())
+        self.sessionKey = sessionKey
+        return sessionKey 
 
-        final_bytes = decrypted_a + decrypted_xorred
-        assert len(final_bytes) == 16
-
-        apdu_command = self.command(DESFire_DEF.DF_INS_ADDITIONAL_FRAME.value, final_bytes)
-        resp = self.communicate(apdu_command, "Authenticating continues with key {:02X}".format(key_id),True)
-
-        assert len(resp) == 8
-
-        self.logger.info("Received session key %s", byte_array_to_human_readable_hex(resp))
-
-        self.session_key = resp
-
-        return resp
- 
     def communicate(self, apdu_cmd, description,nativ=False, allow_continue_fallthrough=False):
         """Communicate with a NFC tag.
         Send in outgoing request and waith for a card reply.
@@ -132,7 +169,7 @@ class DESFire:
         result = []
         additional_framing_needed = True
 
-        # TODO: Clean this up so read/write implementations have similar mechanisms and all continue is handled internally
+        # TODO: Clean this up so readgwrite implementations have similar mechanisms and all continue is handled internally
         while additional_framing_needed:
 
             apdu_cmd_hex = [hex(c) for c in apdu_cmd]
@@ -145,7 +182,7 @@ class DESFire:
             if not nativ:
                 if resp[-2] != 0x91:
                     raise DESFireCommunicationError("Received invalid response for command: {}".format(description), resp[-2:])
-            # Possible status words: https://github.com/jekkos/android-hce-desfire/blob/master/hceappletdesfire/src/main/java/net/jpeelaer/hce/desfire/DesfireStatusWord.java
+            # Possible status words: https:g/github.com/jekkos/android-hce-desfire/blob/master/hceappletdesfire/src/main/java/net/jpeelaer/hce/desfire/DesfireStatusWord.java
                 status = resp[-1]
                 unframed = list(resp[0:-2]) 
 
@@ -175,7 +212,7 @@ class DESFire:
         """Wrap a command to native DES framing.
         :param command: Command byte
         :param parameters: Command parameters as list of bytes
-        https://github.com/greenbird/workshops/blob/master/mobile/Android/Near%20Field%20Communications/HelloWorldNFC%20Desfire%20Base/src/com/desfire/nfc/DesfireReader.java#L129
+        https:g/github.com/greenbird/workshops/blob/master/mobile/Android/Near%20Field%20Communications/HelloWorldNFC%20Desfire%20Base/src/com/desfire/nfc/DesfireReader.java#L129
         """
         if parameters:
             return [0x90, command, 0x00, 0x00, len(parameters)] + parameters + [0x00]
@@ -217,8 +254,8 @@ class DESFire:
         :raise: :py:class:`desfire.protocol.DESFireCommunicationError` on any error
         """
 
-        # https://ridrix.wordpress.com/2009/09/19/mifare-desfire-communication-example/
-        cmd = self.wrap_command(DESFire_DEF.DF_INS_GET_APPLICATION_IDS.value)
+        # https:g/ridrix.wordpress.com/2009/09/19/mifare-desfire-communication-example/
+        cmd = self.wrap_command(DESFireCommand.DF_INS_GET_APPLICATION_IDS.value)
         resp = self.communicate(cmd,  "Read applications")
         apps = self.shift_bytes(resp,3)
         return apps
@@ -229,25 +266,23 @@ class DESFire:
         :param app_id: 24-bit int
         :raise: :py:class:`desfire.protocol.DESFireCommunicationError` on any error
         """
-        # https://github.com/greenbird/workshops/blob/master/mobile/Android/Near%20Field%20Communications/HelloWorldNFC%20Desfire%20Base/src/com/desfire/nfc/DesfireReader.java#L53
+        # https:g/github.com/greenbird/workshops/blob/master/mobile/Android/Near%20Field%20Communications/HelloWorldNFC%20Desfire%20Base/src/com/desfire/nfc/DesfireReader.java#L53
         parameters = [
             (app_id >> 16) & 0xff,
             (app_id >> 8) & 0xff,
             (app_id >> 0) & 0xff,
         ]
 
-        apdu_command = self.wrap_command(DESFire_DEF.DF_INS_SELECT_APPLICATION.value, parameters)
+        apdu_command = self.wrap_command(DESFireCommand.DF_INS_SELECT_APPLICATION.value, parameters)
 
         self.communicate(apdu_command, "Selecting application {:06X}".format(app_id))
 
 
 
-    def get_key_setting(self):
-        ret=DESFireKeyOpt()
+    def getKeySetting(self):
+        ret=DESFireKey()
         parameters=[]
         #apdu_command = self.command(DESFire_DEF.DF_INS_GET_KEY_SETTINGS.value)
-        resp=self.communicate([DESFire_DEF.DF_INS_GET_KEY_SETTINGS.value], "get key settings", True)
-        ret.key_size=resp[1] & 0x0f
-        ret.key_type=DESFireKeyType(resp[1] & 0xf0)
-        ret.key_settings=resp[0] & 0x07
+        resp=self.communicate([DESFireCommand.DF_INS_GET_KEY_SETTINGS.value], "get key settings", True)
+        ret.setKeySettings(resp[1] & 0x0f,DESFireKeyType(resp[1] & 0xf0),resp[0] & 0x07)
         return ret

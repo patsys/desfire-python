@@ -1,6 +1,12 @@
 """Misc. utility functions."""
 
 
+
+def BitShiftLeft(u8_Data, s32_Length):
+    for n in range (0,s32_Length-1): 
+        u8_Data[n] = (int.from_bytes(u8_Data[n], byteorder='big') << 1) | (int.from_bytes(u8_Data[n+1], byteorder='big') >> 7)
+    u8_Data[s32_Length - 1]=bytes(int.from_bytes(u8_Data[s32_Length - 1] << 1))
+
 def byte_array_to_byte_string(bytes):
     s = "".join([chr(b) for b in bytes])
     return s
