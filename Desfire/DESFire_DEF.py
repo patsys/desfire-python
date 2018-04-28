@@ -2,6 +2,7 @@ from enum import Enum
 import struct
 from Crypto.Cipher import DES, DES3, AES
 from Crypto import Random
+from Crypto.Util.strxor import strxor
 from .util import *
 
 def chunks(data, n):
@@ -178,10 +179,12 @@ class DESFireKey():
         self.Cipher = None
         self.CipherBlocksize = None
 
-        self.Cmac1 = None
-        self.Cmac2 = None
+        self.cmac = None
+        self.cmac1 = None
+        self.cmac2 = None
         self.keySettings = 0
         self.keyNumbers = 0
+        self.chiperMode = None
 
 
     def listHumanKeySettings(self):
@@ -197,7 +200,7 @@ class DESFireKey():
     def CiperInit(self):
         if self.keySize == 0:
             if self.keyBytes == None:
-                self.keySize=16
+                self.keySize=8
             else:
                 self.keySize=len(self.keyBytes)
         self.setDefaultKeyNotSet()
@@ -206,9 +209,10 @@ class DESFireKey():
         #todo assert on key length!
         if self.keyType == DESFireKeyType.DF_KEY_AES:
             #AES is used
-            assert self.keySize == 16
+            self.keySize == 16
             self.CipherBlocksize = 16
             self.ClearIV()
+            self.chiperMode = AES
             self.Cipher = AES.new(bytes(self.keyBytes), AES.MODE_CBC, bytes(self.IV))
 
         elif self.keyType == DESFireKeyType.DF_KEY_2K3DES:
@@ -216,10 +220,12 @@ class DESFireKey():
             if self.keySize == 8:
                 self.CipherBlocksize = 8
                 self.ClearIV()
+                self.chiperMode = DES
                 self.Cipher = DES.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
         #2DES is used (3DES with 2 keys only)
             elif self.keySize == 16:
                 self.CipherBlocksize = 8
+                self.chiperMode = DES3
                 self.ClearIV()
                 self.Cipher = DES3.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
 
@@ -252,84 +258,233 @@ class DESFireKey():
         self.keyType=keyType
         self.keySettings=keySettings
 
-    def PaddedEncrypt(self, data):
-        padsize = 0
-        m = len(data) % self.CipherBlocksize
-        if m != 0:
-            if len(data) < self.CipherBlocksize:
-                padsize = m
-            else:
-                padsize = (((len(data)/self.CipherBlocksize)+1)*self.CipherBlocksize) - len(data)
-        return self.Encrypt(data + '\x00'*padsize)
 
     def Encrypt(self, data):
         #todo assert on blocksize
-        result = []
-        for block in chunks(data, self.CipherBlocksize):
-            self.IV = data[-self.CipherBlocksize:]
-            #print 'Block: ' + block.encode('hex')
-            #print 'Block (xor): ' + block_xor.encode('hex')
-            block= self.Cipher.encrypt(bytes(block))
-            #print 'Block (dec): ' + block_dec.encode('hex')
-            result+= block
-        return result
+        self.IV = data[-self.CipherBlocksize:]
+        return list(bytearray(self.Cipher.encrypt(bytes(data))))
 
     def Decrypt(self, dataEnc):
         #todo assert on blocksize
-        result = []
-        block_dec = self.Cipher.decrypt(bytes(dataEnc))
-        self.IV = block_dec[-self.CipherBlocksize:]
-        result+=block_dec
-        return result
+        block = self.Cipher.decrypt(bytes(dataEnc))
+        self.IV = block[-self.CipherBlocksize:]
+        return list(bytearray(block))
 
 
     #Generates the two subkeys mu8_Cmac1 and mu8_Cmac2 that are used for CMAC calulation with the session key
-    def GenerateCmacSubkeys(self):
-       ### THIS PART IS NOT WORKING CORRECTLY!!!
-       R = 0x87
-       if self.CipherBlocksize == 8:
-               R = 0x1B
-
-       data = [0x00] *16
-       self.ClearIV()
-       data = self.Decrypt(data)
-       #print 'Before: ' + data.encode('hex')
-       self.Cmac1 =  BitShiftLeft(data,self.CipherBlocksize)
-       if (data[0] & 0x80):
-           t = hex2int(self.Cmac1[-1]) ^ R
-           self.Cmac1 = self.Cmac1[:-1] + int2hex(t)
-
-       self.Cmac2 =  BitShiftLeft(self.Cmac1,self.CipherBlocksize)
-       if (self.Cmac1[0] & 0x80):
-           t = hex2int(self.Cmac2[-1]) ^ R
-           self.Cmac2 = self.Cmac2[:-1] + int2hex(t)
-
-       #print  'Cmac1: ' + self.Cmac1.encode('hex').upper()
-       #print  'Cmac2: ' + self.Cmac2.encode('hex').upper()
-
-
+    def GenerateCmac(self): 
+        self.cmac=CMAC.new(bytes(self.keyBytes),ciphermod=self.chiperMode)
     #Calculate the CMAC (Cipher-based Message Authentication Code) from the given data.
     #The CMAC is the initialization vector (IV) after a CBC encryption of the given data.
     def CalculateCmac(self, data):
-        # If the data length is not a multiple of the block size -> pad the buffer with 80,00,00,00,....
-        ### THIS PART IS NOT WORKING CORRECTLY!!!
-        cmac = ''
-        #print data.encode('hex')
-        padsize = calcPadSize(data, self.CipherBlocksize)
-        #print padsize
-        if padsize != 0:
-            data += '\x80' + '\x00'*(padsize-1)
-            #print data.encode('hex')
-            cmac = XOR(data, self.Cmac2)
-        else:
-            #print data.encode('hex')
-            cmac = XOR(data, self.Cmac1)
-
-        #print cmac.encode('hex')
-
-        cmac_enc = self.Decrypt(cmac)
-        self.IV = cmac_enc
+        cmac_enc=b''
+        cmac_enc = self.cmac.CalculateCmac(data)
+        #cmac_enc = self.cmac.digest()
         return cmac_enc
+    
+    def VerifyCmac(self,tag):
+        self.cmac.verify(tag)
 
     def __repr__(self):
-        return 'keyNumbers:'+ str(self.keyNumbers) + 'keySize:' + str(self.keySize)  + "\nversion:" + str(self.keyVersion) + "\nkeyType:" + self.keyType.name + "\n" + "keySettings:" + str(self.listHumanKeySettings())
+        return "--- Desfire Key Details ---\r\n"+'keyNumbers:'+ str(self.keyNumbers) + '\r\nkeySize:' + str(self.keySize)  + "\r\nversion:" + str(self.keyVersion) + "\nkeyType:" + self.keyType.name + "\r\n" + "keySettings:" + str(self.listHumanKeySettings())
+
+
+    
+class DESFireCardVersion():
+
+    def __init__(self,data):
+        self.rawBytes = data
+        self.hardwareVendorId    = data[0]
+        self.hardwareType        = data[1]
+        self.hardwareSubType     = data[2]
+        self.hardwareMajVersion  = data[3]
+        self.hardwareMinVersion  = data[4]
+        self.hardwareStorageSize = data[5]
+        self.hardwareProtocol    = data[6]
+
+        self.softwareVendorId    = data[7]
+        self.softwareType        = data[8]
+        self.softwareSubType     = data[9]
+        self.softwareMajVersion  = data[10]
+        self.softwareMinVersion  = data[11]
+        self.softwareStorageSize = data[12]
+        self.softwareProtocol    = data[13]
+
+        self.UID      = data[14:21]        # The serial card number
+        self.batchNo  = data[21:25]        # The batch number
+        self.cwProd   = data[26]           # The production week (BCD)
+        self.yearProd = data[27]           # The production year (BCD)
+
+    def __repr__(self):
+        temp =  "--- Desfire Card Details ---\r\n"
+        temp += "Hardware Version: %d.%d\r\n"% (self.hardwareMajVersion, self.hardwareMinVersion)
+        temp += "Software Version: %d.%d\r\n"% (self.softwareMajVersion, self.softwareMinVersion)
+        temp += "EEPROM size:      %d bytes\r\n"% (1 << (self.hardwareStorageSize-1))
+        temp += "Production :       week %X, year 20%02X\r\n" % (self.cwProd, self.yearProd)
+        temp += "UID no  : %s\r\n" % (byte_array_to_human_readable_hex(self.UID),)
+        temp += "Batch no: %s\r\n" % (byte_array_to_human_readable_hex(self.batchNo),)
+        return temp
+
+    def toDict(self):
+         temp = {}
+         temp['rawBytes']            = self.rawByte
+         temp['hardwareVendorId']    = self.hardwareVendorId
+         temp['hardwareType']        = self.hardwareType
+         temp['hardwareSubType']     = self.hardwareSubType
+         temp['hardwareMajVersion']  = self.hardwareMajVersion
+         temp['hardwareMinVersion']  = self.hardwareMinVersion
+         temp['hardwareStorageSize'] = self.hardwareStorageSize
+         temp['hardwareProtocol']    = self.hardwareProtocol
+         temp['softwareVendorId']    = self.softwareVendorId
+         temp['softwareType']        = self.softwareType
+         temp['softwareSubType']     = self.softwareSubType
+         temp['softwareMajVersion']  = self.softwareMajVersion
+         temp['softwareMinVersion']  = self.softwareMinVersion
+         temp['softwareStorageSize'] = self.softwareStorageSize
+         temp['softwareProtocol']    = self.softwareProtocol
+         temp['UID']      = self.UID
+         temp['batchNo']  = self.batchNo
+         temp['cwProd']   = self.cwProd
+         temp['yearProd'] = self.yearProd
+         return temp
+
+
+class DESFireFilePermissions():
+
+    def __init__(self):
+        self.ReadAccess         = None
+        self.WriteAccess        = None
+        self.ReadAndWriteAccess = None
+        self.ChangeAccess       = None
+
+    def pack(self):
+        return (self.ReadAccess << 12) | (self.WriteAccess <<  8) | (self.ReadAndWriteAccess <<  4) | self.ChangeAccess;
+    
+    def unpack(self, data):
+        self.ReadAccess         = bool((data >> 12) & 0x0F)
+        self.WriteAccess        = bool((data >>  8) & 0x0F)
+        self.ReadAndWriteAccess = bool((data >>  4) & 0x0F)
+        self.ChangeAccess       = bool((data      ) & 0x0F)
+
+    def __repr__(self):
+        temp =  '----- DESFireFilePermissions ---\r\n'
+        if self.ReadAccess:
+            temp += 'READ|'
+        if self.WriteAccess:
+            temp += 'WRITE|'
+        if self.ReadAndWriteAccess:
+            temp += 'READWRITE|'
+        if self.ReadAndWriteAccess:
+            temp += 'CHANGE|'
+        return temp
+
+    def toDict(self):
+        temp = {}
+        temp['ReadAccess']         = self.ReadAccess
+        temp['WriteAccess']        = self.WriteAccess
+        temp['ReadAndWriteAccess'] = self.ReadAndWriteAccess
+        temp['ChangeAccess']       = self.ChangeAccess
+        return temp
+    
+
+
+
+
+
+class DESFireFileSettings:
+
+    def __init__(self):
+
+        self.FileType    = None #DESFireFileType
+        self.Encryption  = None #DESFireFileEncryption
+        self.Permissions = DESFireFilePermissions()
+        # ----------------------------
+        # used only for MDFT_STANDARD_DATA_FILE and MDFT_BACKUP_DATA_FILE
+        self.FileSize    = None #uint32_t
+        # -----------------------------
+        # used only for MDFT_VALUE_FILE_WITH_BACKUP
+        self.LowerLimit  = None #uint32_t
+        self.UpperLimit  = None #uint32_t
+        self.LimitedCreditValue   = None
+        self.LimitedCreditEnabled = None #bool
+        # -----------------------------
+        # used only for MDFT_LINEAR_RECORD_FILE_WITH_BACKUP and MDFT_CYCLIC_RECORD_FILE_WITH_BACKUP
+        self.RecordSize           = None #uint32_t
+        self.MaxNumberRecords     = None #uint32_t
+        self.CurrentNumberRecords = None        #uint32_t
+
+    def parse(self, data):
+        self.FileType   = DESFireFileType(hex2int(data[0]))
+        self.Encryption = DESFireFileEncryption(hex2int(data[1]))
+        self.Permissions.unpack(struct.unpack('>H',data[2:4])[0])
+        
+        if self.FileType == DESFireFileType.MDFT_LINEAR_RECORD_FILE_WITH_BACKUP:
+            self.RecordSize = struct.unpack('<I', data[4:6] + '\x00\x00')[0]  
+            self.MaxNumberRecords = struct.unpack('<I', data[6:8] + '\x00\x00')[0]
+            self.CurrentNumberRecords = struct.unpack('<I', data[8:10] + '\x00\x00')[0]
+
+        elif self.FileType == DESFireFileType.MDFT_STANDARD_DATA_FILE:
+            self.FileSize = struct.unpack('<I', data[4:6] + '\x00\x00')[0]
+
+
+        else:
+            # TODO: We can still access common attributes
+            # raise NotImplementedError("Please fill in logic for file type {:02X}".format(resp[0]))
+            pass
+
+    def __repr__(self):
+        temp = ' ----- DESFireFileSettings ----\r\n'
+        temp += 'File type: %s\r\n' % (self.FileType.name)
+        temp += 'Encryption: %s\r\n' % (self.Encryption.name)
+        temp += 'Permissions: %s\r\n' % (repr(self.Permissions))
+        if self.FileType == DESFireFileType.MDFT_LINEAR_RECORD_FILE_WITH_BACKUP:
+            temp += 'RecordSize: %d\r\n' % (self.RecordSize)
+            temp += 'MaxNumberRecords: %d\r\n' % (self.MaxNumberRecords)
+            temp += 'CurrentNumberRecords: %d\r\n' % (self.CurrentNumberRecords)
+
+        elif self.FileType == DESFireFileType.MDFT_STANDARD_DATA_FILE:
+            temp += 'File size: %d\r\n' % (self.FileSize)
+
+        return temp
+
+    def toDict(self):
+        temp = {}
+        temp['FileType'] = self.FileType.name
+        temp['Encryption'] = self.Encryption.name
+        temp['Permissions'] = self.Permissions.toDict()
+        temp['LowerLimit'] = self.LowerLimit
+        temp['UpperLimit'] = self.UpperLimit
+        temp['LimitedCreditValue'] = self.LimitedCreditValue
+        temp['LimitedCreditEnabled'] = self.LimitedCreditEnabled
+        if self.FileType == DESFireFileType.MDFT_LINEAR_RECORD_FILE_WITH_BACKUP:
+            temp['RecordSize'] = self.RecordSize
+            temp['MaxNumberRecords'] = self.MaxNumberRecords
+            temp['CurrentNumberRecords'] = self.CurrentNumberRecords
+        elif self.FileType == DESFireFileType.MDFT_STANDARD_DATA_FILE:
+            temp['FileSize'] = self.FileSize
+        return temp
+
+
+
+
+
+
+
+def calc_key_settings(mask):
+    if type(mask) is list:
+        #not parsing, but calculating
+        res = 0
+        for keysetting in mask:
+            res += keysetting.value
+        return res & 0xFF
+
+
+    a=2147483648
+    result = []
+    while a>>1:
+        a = a>>1
+        masked = mask&a
+        if masked:
+            if DESFireKeySettings(masked):
+                result.append(DESFireKeySettings(masked))
+    return result

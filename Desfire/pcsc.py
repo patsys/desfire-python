@@ -33,3 +33,21 @@ class PCSCDevice(Device):
         if hresult != 0:
             raise CardConnectionException('Failed to transmit with protocol ' + str(pcscprotocolheader) + '. ' + SCardGetErrorMessage(hresult))
         return response
+
+class DummyPCSCDevice(Device):
+    """DESFire protocol wrapper for pyscard interface."""
+
+    def __init__(self):
+        """
+        :card_connection: :py:class:`smartcard.pcsc.PCSCCardConnection.PCSCCardConnection` instance. Call ``card_connection.connect()`` before calling any DESFire APIs.
+        """
+        self.response={}
+    
+    def addResponse(self,send,resp):
+        toadd=[0]
+        toadd+=[bytearray.fromhex(a) for a in resp]
+        self.response[bytes(bytearray.fromhex(send))]=toadd
+
+    def transceive(self, send):
+        self.response[bytes(send)][0]+=1
+        return list(self.response[bytes(send)][self.response[bytes(send)][0]])
