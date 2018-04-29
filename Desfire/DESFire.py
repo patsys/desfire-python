@@ -24,7 +24,8 @@ class DESFireCommunicationError(Exception):
 
 class DESFire:
     isAuthenticated = False
-    sessionKey = None 
+    sessionKey = None
+    cmac = None
     def __init__(self, device, logger=None):
         """
         :param device: :py:class:`desfire.device.Device` implementation
@@ -203,7 +204,7 @@ class DESFire:
 
         return result
 
-    def communicate(self, apdu_cmd,description, nativ=False, allow_continue_fallthrough=False, isEncryptedComm = False, withTXCMAC = False ):
+    def communicate(self, apdu_cmd,description, nativ=False, allow_continue_fallthrough=False, isEncryptedComm = False, withTXCMAC = False, withCRC=False ):
         """
         cmd : the DESFire instruction byte (in hex format)
         data: optional parameters (in hex format)
@@ -220,18 +221,13 @@ class DESFire:
         
         #encrypt the communication
         if isEncryptedComm:
-           raise Exception('Not implemented')
-           if withTXCMAC:
-                   return
-           else:
-                   return
+            apdu_cmd=self.sessionKey.EncryptMsg(apdu_cmd,withCRC)
         #communication with the card is not encrypted, but CMAC might need to be calculated
-        else:
             #calculate cmac for outgoing message
-            if withTXCMAC:
-                TXCMAC = self.sessionKey.CalculateCmac(apdu_cmd)
-                self.logger.debug("TXCMAC      : " + byte_array_to_human_readable_hex(TXCMAC))
-            response = self._communicate(apdu_cmd,description,nativ, allow_continue_fallthrough)
+        if withTXCMAC:
+            TXCMAC = self.sessionKey.CalculateCmac(apdu_cmd)
+            self.logger.debug("TXCMAC      : " + byte_array_to_human_readable_hex(TXCMAC))
+        response = self._communicate(apdu_cmd,description,nativ, allow_continue_fallthrough)
         
         if self.isAuthenticated and len(response) >= 8:
             #after authentication, there is always an 8 bytes long CMAC coming from the card, to ensure message integrity
@@ -253,6 +249,7 @@ class DESFire:
             RXCMAC_CALC = self.sessionKey.CalculateCmac(cmacdata)
             self.logger.debug("RXCMAC      : " + byte_array_to_human_readable_hex(RXCMAC))
             self.logger.debug("RXCMAC_CALC: " + byte_array_to_human_readable_hex(RXCMAC_CALC))
+            self.cmac=RXCMAC_CALC
             if bytes(RXCMAC) != bytes(RXCMAC_CALC):
                 raise Exception("RXCMAC not equal")
 
@@ -279,61 +276,36 @@ class DESFire:
             return [command]
 
 
-    def shift_bytes(self, resp,count):
-        """Handle response for command 0x6a list applications.
-        DESFire application ids are 24-bit integers.
-        :param resp: DESFire response as byte array
-        :return: List of parsed application ids
+
+    def getApplicationIDs(self):
+        """Lists all application on the card
+        Authentication is NOT needed to call this function
+        Args:
+                None
+        Returns:
+                list: A list of application IDs, in a 4 byte hex form
         """
+        self.logger.debug("GetApplicationIDs")
+        appids = []
+        cmd = DESFireCommand.DF_INS_GET_APPLICATION_IDS.value
+        raw_data = self.communicate([cmd], 'Get Application IDs',nativ=True, withTXCMAC=self.isAuthenticated)
+
         pointer = 0
         apps = []
-        while pointer < len(resp):
-            shift=count*8
-            appid=0
-            for i in range(0,count):
-                app_id = (resp[pointer] << shift)
-                pointer+=1
-                shift-=8
-            apps.append(app_id)
-            self.logger.debug("Reading %d %08x", pointer, app_id)
+        while pointer < len(raw_data):
+                appid = [raw_data[pointer+2]] + [raw_data[pointer+1]] + [raw_data[pointer]]
+                self.logger.debug("Reading %s", byte_array_to_human_readable_hex(appid))
+                apps.append(appid)
+                pointer += 3
+
         return apps
-
-    def get_applications(self):
-        """Get all applications listed in Desfire root.
-        :return: List of 24-bit integer
-        :raise: :py:class:`desfire.protocol.DESFireCommunicationError` on any error
-        """
-
-        # https:g/ridrix.wordpress.com/2009/09/19/mifare-desfire-communication-example/
-        cmd = self.wrap_command(DESFireCommand.DF_INS_GET_APPLICATION_IDS.value)
-        resp = self.communicate([cmd],  "Read applications")
-        apps = self.shift_bytes(resp,3)
-        return apps
-
-
-    def select_application(self, app_id):
-        """Choose application on a card on which all the following file commands will apply.
-        :param app_id: 24-bit int
-        :raise: :py:class:`desfire.protocol.DESFireCommunicationError` on any error
-        """
-        # https:g/github.com/greenbird/workshops/blob/master/mobile/Android/Near%20Field%20Communications/HelloWorldNFC%20Desfire%20Base/src/com/desfire/nfc/DesfireReader.java#L53
-        parameters = [
-            (app_id >> 16) & 0xff,
-            (app_id >> 8) & 0xff,
-            (app_id >> 0) & 0xff,
-        ]
-
-        apdu_command = self.wrap_command(DESFireCommand.DF_INS_SELECT_APPLICATION.value, parameters)
-
-        self.communicate(apdu_command, "Selecting application {:06X}".format(app_id))
-
 
 
     def getKeySetting(self):
         ret=DESFireKey()
         parameters=[]
         #apdu_command = self.command(DESFire_DEF.DF_INS_GET_KEY_SETTINGS.value)
-        resp=self.communicate([DESFireCommand.DF_INS_GET_KEY_SETTINGS.value], "get key settings", True)
+        resp=self.communicate([DESFireCommand.DF_INS_GET_KEY_SETTINGS.value], "get key settings", nativ=True, withTXCMAC=self.isAuthenticated)
         ret.setKeySettings(resp[1] & 0x0f,DESFireKeyType(resp[1] & 0xf0),resp[0] & 0x07)
         return ret
 
@@ -370,29 +342,6 @@ class DESFire:
 
     ###### Application related
 
-    def getApplicationIDs(self):
-        """Lists all application on the card
-        Authentication is NOT needed to call this function
-        Args:
-            None
-        Returns:
-            list: A list of application IDs, in a 4 byte hex form
-        """
-        self.logger.debug("GetApplicationIDs")
-        appids = []
-        cmd = DESFireCommand.DF_INS_GET_APPLICATION_IDS.value
-        raw_data = self.communicate([cmd], 'get applicatin ID\'s',nativ=True, withTXCMAC=self.isAuthenticated)
-
-        pointer = 0
-        apps = []
-        while pointer < len(raw_data):
-            appid = [raw_data[pointer] << 16,raw_data[pointer+1] << 8, raw_data[pointer+2]]
-            self.logger.debug("Reading %d %08x", pointer, appid)
-            apps.append(appid)
-            pointer += 3
-
-        return apps
-        
 
     def selectApplication(self, appid):
         """Choose application on a card on which all the following commands will apply.
@@ -403,11 +352,13 @@ class DESFire:
             None
         """
         self.logger.debug('Selecting application with AppID %s' % (appid,))
-        parameters =  [ (appid >> 16) & 0xff,(appid >> 8) & 0xff,(appid >> 0) & 0xff]
+        
+        appid = bytearray.fromhex(appid)
+        parameters =  [ appid[2], appid[1], appid[0] ]
         
 
         cmd = DESFireCommand.DF_INS_SELECT_APPLICATION.value
-        self.communicate(self.cammand(cmd, parameters),'select Application',nativ=True)
+        self.communicate(self.command(cmd, parameters),'select Application',nativ=True)
         #if new application is selected, authentication needs to be carried out again
         self.isAuthenticated = False
         self.lastSelectedApplication = appid
@@ -438,13 +389,14 @@ class DESFire:
         Returns:
             None
         """
-        self.logger.debug('Deleting application for AppID 0x%x', (appid))
+        self.logger.debug('Deleting application for AppID %s', appid)
 
-        appid = [(appid >> 16) & 0xff,(appid >> 8) & 0xff,(appid >> 0) & 0xff]
+        appid = bytearray.fromhex(appid)
+        appid = [ appid[2], appid[1], appid[0] ]
 
         params = appid
         cmd = DESFireCommand.DF_INS_DELETE_APPLICATION.value
-        self.communicate(self.command(cmd, params),'delete Application',native=True, withTXCMAC=self.isAuthenticated)
+        self.communicate(self.command(cmd, params),'delete Application',nativ=True, withTXCMAC=self.isAuthenticated)
 
 
     ###### FILE FUNTCIONS
@@ -522,7 +474,7 @@ class DESFire:
 
         params = [keyNo]
         cmd = DESFireCommand.DF_INS_GET_KEY_VERSION.value
-        raw_data = self.communicate(self.command(cmd, params),'get key version',native=True)
+        raw_data = self.communicate(self.command(cmd, params),'get key version',nativ=True, withTXCMAC=self.isAuthenticated)
         self.logger.debug('Got key version 0x%s for keyid %x' %(raw_data.encode('hex'),keyNo))
         return raw_data
 
@@ -538,7 +490,7 @@ class DESFire:
         self.logger.debug('Changing key settings to %s' %('|'.join(a.name for a in newKeySettings),))
         params = [calc_key_settings(newKeySettings)]
         cmd = DESFireCommand.DF_INS_CHANGE_KEY_SETTINGS.value
-        raw_data = self.communicate(self.command(cmd,params),'change key settings', nativ=True)
+        raw_data = self.communicate(self.command(cmd,params),'change key settings', nativ=True, isEncryptedComm=True, withCRC=True)
 
 
     def changeKey(self, keyNo, newKey, curKey):

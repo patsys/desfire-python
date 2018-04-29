@@ -2,6 +2,8 @@
 
 
 import sys
+import crcmod.predefined
+
 if sys.version_info[0] == 2 and sys.version_info[1] == 1:
     from Crypto.Util.py21compat import *
 from Crypto.Util.py3compat import *
@@ -11,8 +13,13 @@ from binascii import unhexlify
 from Crypto.Util.strxor import strxor
 from Crypto.Util.number import long_to_bytes, bytes_to_long
 
-#: The size of the authentication tag produced by the MAC.
 
+
+def CRC32(data):
+    crc=[0xff,0xff,0xff,0xff]
+    crc32_func = crcmod.predefined.mkCrcFun('jamcrc')
+    return crc32_func(bytes(data))
+#: The size of the authentication tag produced by the MAC.
 digest_size = None
 
 def _shift_bytes(bs, xor_lsb=0):
@@ -106,7 +113,7 @@ class CMAC(_SmoothMAC):
     #: The size of the authentication tag produced by the MAC.
     digest_size = None
 
-    def __init__(self, key, msg = None, ciphermod = None, IV=None):
+    def __init__(self, key, msg = None, ciphermod = None):
         """Create a new CMAC object.
         :Parameters:
           key : byte string
@@ -154,9 +161,6 @@ class CMAC(_SmoothMAC):
 
         # Initialize CBC cipher with zero IV
         self._IV = bchr(0)*ciphermod.block_size
-        if IV != None:
-            print("IV set:", byte_array_to_human_readable_hex(IV))
-            self._IV = IV
         self._mac = ciphermod.new(key, ciphermod.MODE_CBC, self._IV)
 
     def CalculateCmac(self,data):
@@ -165,12 +169,16 @@ class CMAC(_SmoothMAC):
             ndata+= [0x80] + [0x00] * (self._bs-len(ndata)%self._bs-1)
             ndata = bytes(ndata[0:-self._bs]) + strxor(bytes(ndata[-self._bs:]),self._k2)
         else:
-            ndata = bytes(ndata[0:-self._bs]) + strxor(bytes(ndata[-self._bs:]),self_k1)
+            ndata = bytes(ndata[0:-self._bs]) + strxor(bytes(ndata[-self._bs:]),self._k1)
         ret=self._mac.encrypt(ndata)
         return ret[-self._bs:]
 
-    def getIV(self):
-         return self._IV
+    def Encrypt(self,data):
+        return self._mac.encrypt(bytes(data))
+
+    def Decrypt(self,data):
+        return self._mac.encrypt(bytes(data))
+
 
     def update(self, msg):
         """Continue authentication of a message by consuming the next chunk of data.
@@ -266,7 +274,7 @@ class CMAC(_SmoothMAC):
 
         self.verify(unhexlify(tobytes(hex_mac_tag)))
 
-    def new(key, msg = None, ciphermod = None, IV = None):
+    def new(key, msg = None, ciphermod = None):
         """Create a new CMAC object.
         :Parameters:
             key : byte string
@@ -282,7 +290,7 @@ class CMAC(_SmoothMAC):
                 Default is `Crypto.Cipher.AES`.
         :Returns: A `CMAC` object
         """
-        return CMAC(key, msg, ciphermod, IV)
+        return CMAC(key, msg, ciphermod)
 def byte_array_to_byte_string(bytes):
     s = "".join([chr(b) for b in bytes])
     return s
