@@ -38,7 +38,7 @@ class DESFire:
 
         #: 8 bytes of session key after authenticate()
         self.session_key = None
-
+        self.lastSelectedApplication = None
         if logger:
             self.logger = logger
         else:
@@ -146,11 +146,9 @@ class DESFire:
         if keyType == DESFireKeyType.DF_KEY_2K3DES or keyType == DESFireKeyType.DF_KEY_3K3DES:
             sessionKeyBytes = [( a & 0b11111110 ) for a in sessionKeyBytes ]    
         ## now we have the session key, so we reinitialize the crypto!!!
-        key.setKey(sessionKeyBytes)
-        key.GenerateCmac()
-
+        key.GenerateCmac(sessionKeyBytes)
         self.sessionKey = key
-        return sessionKey 
+        return self.sessionKey 
 
     def _communicate(self, apdu_cmd, description,nativ=False, allow_continue_fallthrough=False):
         """Communicate with a NFC tag.
@@ -204,7 +202,7 @@ class DESFire:
 
         return result
 
-    def communicate(self, apdu_cmd,description, nativ=False, allow_continue_fallthrough=False, isEncryptedComm = False, withTXCMAC = False, withCRC=False ):
+    def communicate(self, apdu_cmd,description, nativ=False, allow_continue_fallthrough=False, isEncryptedComm = False, withTXCMAC = False, withCRC=False,withRXCMAC=True, encryptBegin=1):
         """
         cmd : the DESFire instruction byte (in hex format)
         data: optional parameters (in hex format)
@@ -221,7 +219,7 @@ class DESFire:
         
         #encrypt the communication
         if isEncryptedComm:
-            apdu_cmd=self.sessionKey.EncryptMsg(apdu_cmd,withCRC)
+            apdu_cmd=self.sessionKey.EncryptMsg(apdu_cmd,withCRC,encryptBegin)
         #communication with the card is not encrypted, but CMAC might need to be calculated
             #calculate cmac for outgoing message
         if withTXCMAC:
@@ -229,7 +227,7 @@ class DESFire:
             self.logger.debug("TXCMAC      : " + byte_array_to_human_readable_hex(TXCMAC))
         response = self._communicate(apdu_cmd,description,nativ, allow_continue_fallthrough)
         
-        if self.isAuthenticated and len(response) >= 8:
+        if self.isAuthenticated and len(response) >= 8 and withRXCMAC:
             #after authentication, there is always an 8 bytes long CMAC coming from the card, to ensure message integrity
             #todo: verify CMAC
             if len(response) == 8:
@@ -398,6 +396,9 @@ class DESFire:
         cmd = DESFireCommand.DF_INS_DELETE_APPLICATION.value
         self.communicate(self.command(cmd, params),'delete Application',nativ=True, withTXCMAC=self.isAuthenticated)
 
+###################################################################################################################
+### This Function is not refecored 
+###################################################################################################################
 
     ###### FILE FUNTCIONS
 
@@ -427,6 +428,7 @@ class DESFire:
         Authentication is NOT ALWAYS needed to call this function. Depends on the application/card settings.
         Args:
             fileid (int): FileID to get the settings for
+        
         Returns:
             DESFireFileSettings: An object describing all settings for the file
         """
@@ -475,7 +477,7 @@ class DESFire:
         params = [keyNo]
         cmd = DESFireCommand.DF_INS_GET_KEY_VERSION.value
         raw_data = self.communicate(self.command(cmd, params),'get key version',nativ=True, withTXCMAC=self.isAuthenticated)
-        self.logger.debug('Got key version 0x%s for keyid %x' %(raw_data.encode('hex'),keyNo))
+        self.logger.debug('Got key version 0x%s for keyid %x' + str(keyNo))
         return raw_data
 
     def changeKeySettings(self, newKeySettings):
@@ -510,49 +512,42 @@ class DESFire:
         if not self.isAuthenticated:
             raise Exception('Not authenticated!')
 
-        self.logger.debug('Curr IV: ' + hex2hexstr(self.sessionKey.IV))
-        self.logger.debug('curKey : ' + hex2hexstr(curKey.keyBytes))
-        self.logger.debug('newKey : ' + hex2hexstr(newKey.keyBytes))
+        self.logger.debug('curKey : ' +  byte_array_to_human_readable_hex(curKey.getKey()))
+        self.logger.debug('newKey : ' +  byte_array_to_human_readable_hex(newKey.getKey()))
 
-        isSameKey = keyNo == self.lastAuthKeyNo
+        isSameKey = (keyNo == self.lastAuthKeyNo)
         #self.logger.debug('isSameKey : ' + str(isSameKey))
         
-        cryptogram = ''
 
         # The type of key can only be changed for the PICC master key.
         # Applications must define their key type in CreateApplication().
         if self.lastSelectedApplication == 0x00:
             keyNo = keyNo | newKey.keyType.value
         
+        cryptogram = self.command(DESFireCommand.DF_INS_CHANGE_KEY.value, [keyNo])
         #The following if() applies only to application keys.
         #For the PICC master key b_SameKey is always true because there is only ONE key (#0) at the PICC level.
         if not isSameKey:
-            keyData_xor = XOR(newKey.GetKeyBytes(), curKey.GetKeyBytes())
+            keyData_xor=[]
+            if len(newKey.getKey())>len(curKey.getKey()):
+                 keyData_xor = bytearray(strxor(bytes(newKey.getKey()), bytes(curKey.getKey()*2)))
+            else:
+                 keyData_xor = bytearray(strxor(bytes(newKey.getKey()), bytes(curKey.getKey())))
             cryptogram += keyData_xor
         else:
-            cryptogram += newKey.GetKeyBytes()
+            cryptogram += newKey.getKey()
          
         if newKey.keyType == DESFireKeyType.DF_KEY_AES:
             cryptogram += [newKey.keyVersion]
 
-        #self.logger.debug( (int2hex(DESFireCommand.DF_INS_CHANGE_KEY.value) + int2hex(keyNo) + cryptogram).encode('hex'))
-        Crc = DESFireCRC32(DESFireCommand.DF_INS_CHANGE_KEY.value + int2hex(keyNo), cryptogram)
-        self.logger.debug('Crc        : ' + hex2hexstr(Crc))
-        Crc_rev = Crc[::-1]
-        cryptogram += Crc_rev
 
+        cryptogram += bytearray(CRC32(cryptogram).to_bytes(4, byteorder='little'))
         if not isSameKey:
-            CrcNew = DESFireCRC32(newKey.GetKeyBytes())
-            self.logger.debug('Crc New Key: ' + CrcNew)
-            cryptogram += CrcNew[::-1]
+            cryptogram += bytearray(CRC32(newKey.getKey()).to_bytes(4, byteorder='little'))
 
-        self.logger.debug('Cryptogram      : ' + cryptogram)
-        cryptogram_enc = self.sessionKey.PaddedEncrypt(cryptogram)
-        self.logger.debug('Cryptogram (enc): ' + cryptogram_enc)
-
-        params = int2hex(keyNo) + cryptogram_enc
-        cmd = DESFireCommand.DF_INS_CHANGE_KEY.value
-        raw_data = self.communicate(self.command(cmd, params),'change key',nativ=True)
+        #self.logger.debug( (int2hex(DESFireCommand.DF_INS_CHANGE_KEY.value) + int2hex(keyNo) + cryptogram).encode('hex'))
+        print("eae:",byte_array_to_human_readable_hex(cryptogram))
+        raw_data = self.communicate(cryptogram,'change key',nativ=True, isEncryptedComm = True, withRXCMAC = not isSameKey, withTXCMAC = False, withCRC= False, encryptBegin=2)
 
         #If we changed the currently active key, then re-auth is needed!
         if isSameKey:
@@ -560,3 +555,16 @@ class DESFire:
             self.sessionKey = None
 
         return
+
+
+#######################################################################################################################################
+### Helper funcion
+#######################################################################################################################################
+
+    def createKeySetting(self,key, keyNumbers, keyType, keySettings):
+        ret=DESFireKey()
+        ret.setKeySettings(keyNumbers,keyType,calc_key_settings(keySettings))
+        ret.setKey(bytearray.fromhex(key))
+        return ret
+
+

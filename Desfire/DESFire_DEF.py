@@ -246,11 +246,14 @@ class DESFireKey():
     def setDefaultKeyNotSet(self):
         if self.keyBytes == None:
             self.keyBytes=b'\00' * self.keySize
-    
-    
+   
+
     def GetKeyType(self):
         return self.keyType
-    
+
+    def getKey(self):
+        return self.keyBytes
+
     def setKey(self,key):
         if isinstance(key,str):
             self.keyBytes=bytes(bytearray.fromhex(key))
@@ -272,19 +275,16 @@ class DESFireKey():
         self.IV = data[-self.CipherBlocksize:]
         return list(bytearray(self.Cipher.encrypt(bytes(data))))
 
-    def EncryptMsg(self, data, withCRC=False):
-            print(byte_array_to_human_readable_hex(bytearray(CRC32(bytearray.fromhex('54 0D')).to_bytes(4, byteorder='little'))))
-            print('data:',byte_array_to_human_readable_hex(data))
+    def EncryptMsg(self, data, withCRC=False, encryptBegin=1):
             sdata=data.copy()
             if withCRC:
-                print('tast:',bytearray(CRC32(data).to_bytes(4, byteorder='little')))
                 data+=bytearray(CRC32(data).to_bytes(4, byteorder='little'))
-                print("data:",byte_array_to_human_readable_hex(data))
-                data+=[0x00] * (self.CipherBlocksize-len(data)%self.CipherBlocksize+1)
-                print("data:",byte_array_to_human_readable_hex(data))
+            
+            data+=[0x00] * ((-(len(data)-encryptBegin)%self.CipherBlocksize))
 
             #c=self.chiperMode.new(bytes(self.keyBytes), self.chiperMode.MODE_CBC, bytes(self.IV))
-            ret = bytearray([data[0]])+self.cmac.Encrypt(data[1:])
+            print('crypt:',byte_array_to_human_readable_hex(data[encryptBegin:]))
+            ret = bytearray(data[0:encryptBegin])+self.cmac.Encrypt(data[encryptBegin:])
             #self.GenerateCmac()
             #self.CalculateCmac(bytearray(data))
             return ret  
@@ -297,8 +297,8 @@ class DESFireKey():
 
 
     #Generates the two subkeys mu8_Cmac1 and mu8_Cmac2 that are used for CMAC calulation with the session key
-    def GenerateCmac(self): 
-        self.cmac=CMAC.new(bytes(self.keyBytes),ciphermod=self.chiperMode)
+    def GenerateCmac(self,key): 
+        self.cmac=CMAC.new(bytes(key),ciphermod=self.chiperMode)
     #Calculate the CMAC (Cipher-based Message Authentication Code) from the given data.
     #The CMAC is the initialization vector (IV) after a CBC encryption of the given data.
     def CalculateCmac(self, data):
