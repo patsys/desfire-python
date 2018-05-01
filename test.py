@@ -131,6 +131,7 @@ def AuthTest_AES():
         reader.addResponse('AF 36 AA D7 DF 6E 43 6B A0 8D 18 61 38 30 A7 0D 5A D4 3E 3D 3F 4A 8D 47 54 1E EE 62 3A 93 4E 47 74',['00 80 0D B6 80 BC 14 6B D1 21 D6 57 8F 2D 2E 20 59'])
         desfire = DESFire(reader)
         key_setting=desfire.getKeySetting()
+        key_setting.setKey('00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00')
         desfire.authenticate(0,key_setting,'F4 4B 26 F5 68 6F 3A 39 1C D3 8E BD 10 77 22 81')
         print('[+] Test Des')
 
@@ -178,6 +179,6 @@ if __name__ == '__main__':
                 ChangeKeyTest_2DES()
                 """           
                 File()
-                #AuthTest_AES()
-                #Test_DES()
-                #Test_2k3DES()
+                AuthTest_AES()
+                Test_DES()
+                Test_2k3DES()

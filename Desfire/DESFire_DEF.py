@@ -187,13 +187,10 @@ class DESFireKey():
         self.keySize = 0
         self.keyVersion = 0
 
-        self.IV = None
         self.Cipher = None
         self.CipherBlocksize = None
 
         self.cmac = None
-        self.cmac1 = None
-        self.cmac2 = None
         self.keySettings = 0
         self.keyNumbers = 0
         self.chiperMode = None
