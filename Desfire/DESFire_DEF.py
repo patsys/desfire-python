@@ -193,7 +193,7 @@ class DESFireKey():
         self.cmac = None
         self.keySettings = 0
         self.keyNumbers = 0
-        self.chiperMode = None
+        self.ciphermod = None
 
 
     def listHumanKeySettings(self):
@@ -221,7 +221,7 @@ class DESFireKey():
             self.keySize == 16
             self.CipherBlocksize = 16
             self.ClearIV()
-            self.chiperMode = AES
+            self.ciphermod = AES
             self.Cipher = AES.new(bytes(self.keyBytes), AES.MODE_CBC, bytes(self.IV))
 
         elif self.keyType == DESFireKeyType.DF_KEY_2K3DES:
@@ -229,12 +229,12 @@ class DESFireKey():
             if self.keySize == 8:
                 self.CipherBlocksize = 8
                 self.ClearIV()
-                self.chiperMode = DES
+                self.ciphermod = DES
                 self.Cipher = DES.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
         #2DES is used (3DES with 2 keys only)
             elif self.keySize == 16:
                 self.CipherBlocksize = 8
-                self.chiperMode = DES3
+                self.ciphermod = DES3
                 self.ClearIV()
                 self.Cipher = DES3.new(bytes(self.keyBytes), DES.MODE_CBC, bytes(self.IV))
 
@@ -291,7 +291,6 @@ class DESFireKey():
             
             data+=[0x00] * ((-(len(data)-encryptBegin)%self.CipherBlocksize))
 
-            #c=self.chiperMode.new(bytes(self.keyBytes), self.chiperMode.MODE_CBC, bytes(self.IV))
             ret = list(bytearray(data[0:encryptBegin])+self.cmac.Encrypt(data[encryptBegin:]))
             #self.GenerateCmac()
             #self.CalculateCmac(bytearray(data))
@@ -306,7 +305,7 @@ class DESFireKey():
 
     #Generates the two subkeys mu8_Cmac1 and mu8_Cmac2 that are used for CMAC calulation with the session key
     def GenerateCmac(self,key): 
-        self.cmac=CMAC.new(bytes(key),ciphermod=self.chiperMode)
+        self.cmac=CMAC(bytes(key),ciphermod=self.ciphermod)
     #Calculate the CMAC (Cipher-based Message Authentication Code) from the given data.
     #The CMAC is the initialization vector (IV) after a CBC encryption of the given data.
     def CalculateCmac(self, data):
@@ -322,6 +321,63 @@ class DESFireKey():
     def __repr__(self):
         return "--- Desfire Key Details ---\r\n"+'keyNumbers:'+ str(self.keyNumbers) + '\r\nkeySize:' + str(self.keySize)  + "\r\nversion:" + str(self.keyVersion) + "\nkeyType:" + self.keyType.name + "\r\n" + "keySettings:" + str(self.listHumanKeySettings())
 
+class CMAC():
+    """Class that implements CMAC"""
+
+    #: The size of the authentication tag produced by the MAC.
+    digest_size = None
+
+    def __init__(self, key, msg = None, ciphermod = None):
+
+        if ciphermod is None:
+            raise TypeError("ciphermod must be specified (try AES)")
+
+
+        self._key = key
+        self._bs=ciphermod.block_size
+        self._factory = ciphermod
+
+        # Section 5.3 of NIST SP 800 38B
+        if ciphermod.block_size==8:
+            const_Rb = 0x1B
+        elif ciphermod.block_size==16:
+            const_Rb = 0x87
+        else:
+            raise TypeError("CMAC requires a cipher with a block size of 8 or 16 bytes, not %d" %
+                            (ciphermod.block_size,))
+        self.digest_size = ciphermod.block_size
+
+        # Compute sub-keys
+        cipher = ciphermod.new(key, ciphermod.MODE_ECB)
+        l = cipher.encrypt(bchr(0)*ciphermod.block_size)
+        if bord(l[0]) & 0x80:
+            self._k1 = shift_bytes(l, const_Rb)
+        else:
+            self._k1 = shift_bytes(l)
+        if bord(self._k1[0]) & 0x80:
+            self._k2 = shift_bytes(self._k1, const_Rb)
+        else:
+            self._k2 = shift_bytes(self._k1)
+
+        # Initialize CBC cipher with zero IV
+        self._IV = bchr(0)*ciphermod.block_size
+        self._mac = ciphermod.new(key, ciphermod.MODE_CBC, self._IV)
+
+    def CalculateCmac(self,data):
+        ndata=data.copy()
+        if len(ndata)%self._bs:
+            ndata+= [0x80] + [0x00] * (self._bs-len(ndata)%self._bs-1)
+            ndata = bytes(ndata[0:-self._bs]) + strxor(bytes(ndata[-self._bs:]),self._k2)
+        else:
+            ndata = bytes(ndata[0:-self._bs]) + strxor(bytes(ndata[-self._bs:]),self._k1)
+        ret=self._mac.encrypt(ndata)
+        return ret[-self._bs:]
+
+    def Encrypt(self,data):
+        return self._mac.encrypt(bytes(data))
+
+    def Decrypt(self,data):
+        return self._mac.encrypt(bytes(data))
 
     
 class DESFireCardVersion():
