@@ -20,7 +20,6 @@ Features
 -   Functions implement:
 
     -   authenticate
-    -   communicate
     -   getApplicationIDs
     -   getKeySetting
     -   getCardVersion
