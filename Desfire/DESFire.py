@@ -8,7 +8,7 @@ import random
 import pyDes
 from .device import Device
 from .DESFire_DEF import *
-from .util import byte_array_to_human_readable_hex, dword_to_byte_array, word_to_byte_array
+from .util import byte_array_to_human_readable_hex
 
 
 _logger = logging.getLogger(__name__)
