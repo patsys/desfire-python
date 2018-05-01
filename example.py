@@ -1,3 +1,20 @@
+###############################################################################
+### This example need a card with default Masterkey
+### Than do the follow things
+### - Format card       all data will be lost
+### - Create app        with ID 00AE16
+### - Select app
+### - Change key        0, app masterkey
+### - Change setting    key 1 need to change other keys
+### - Change key        1
+### - Auth key          1
+### - Change key        2,3,4
+### - Create file       ID 0
+### - Auth key          3
+### - Write data        file ID 0
+### - Auth key          4
+### - Read data         file ID 0
+
 from __future__ import print_function
 
 import functools
