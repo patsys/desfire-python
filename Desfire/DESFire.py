@@ -581,7 +581,6 @@ class DESFire:
             cryptogram += bytearray(CRC32(newKey.getKey()).to_bytes(4, byteorder='little'))
 
         #self.logger.debug( (int2hex(DESFireCommand.DF_INS_CHANGE_KEY.value) + int2hex(keyNo) + cryptogram).encode('hex'))
-        print("eae:",byte_array_to_human_readable_hex(cryptogram))
         raw_data = self.communicate(cryptogram,'change key',nativ=True, isEncryptedComm = True, withRXCMAC = not isSameKey, withTXCMAC = False, withCRC= False, encryptBegin=2)
 
         #If we changed the currently active key, then re-auth is needed!

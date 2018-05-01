@@ -292,7 +292,6 @@ class DESFireKey():
             data+=[0x00] * ((-(len(data)-encryptBegin)%self.CipherBlocksize))
 
             #c=self.chiperMode.new(bytes(self.keyBytes), self.chiperMode.MODE_CBC, bytes(self.IV))
-            print('crypt:',byte_array_to_human_readable_hex(data[encryptBegin:]))
             ret = list(bytearray(data[0:encryptBegin])+self.cmac.Encrypt(data[encryptBegin:]))
             #self.GenerateCmac()
             #self.CalculateCmac(bytearray(data))
