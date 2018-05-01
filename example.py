@@ -67,7 +67,7 @@ class MyObserver(CardObserver):
             desfire.authenticate(0,key_setting,'84 9B 36 C5 F8 BF 4A 09')
             desfire.getCardVersion()
             desfire.formatCard()
-            desfire.createApplication("00 AE 16",[DESFireKeySettings.KS_ALLOW_CHANGE_MK,DESFireKeySettings.KS_LISTING_WITHOUT_MK,DESFireKeySettings.KS_CONFIGURATION_CHANGEABLE],10,DESFireKeyType.DF_KEY_AES)
+            desfire.createApplication("00 AE 16",[DESFireKeySettings.KS_ALLOW_CHANGE_MK,DESFireKeySettings.KS_LISTING_WITHOUT_MK,DESFireKeySettings.KS_CONFIGURATION_CHANGEABLE],14,DESFireKeyType.DF_KEY_AES)
             desfire.selectApplication('00 AE 16')
             default_key=desfire.createKeySetting('00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',0,DESFireKeyType.DF_KEY_AES,[])            
             app_key=desfire.createKeySetting('00 10 20 31 40 50 60 70 80 90 A0 B0 B0 A0 90 80',0,DESFireKeyType.DF_KEY_AES,[])
@@ -80,7 +80,22 @@ class MyObserver(CardObserver):
             desfire.authenticate(1,app_key_1)
             app_key_2=desfire.createKeySetting('22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00 11',0,DESFireKeyType.DF_KEY_AES,[])
             desfire.changeKey(2,app_key_2,default_key)
-            desfire.authenticate(2,app_key_2)
+            app_key_3=desfire.createKeySetting('33 44 55 66 77 88 99 AA BB CC DD EE FF 00 11 22',0,DESFireKeyType.DF_KEY_AES,[])
+            desfire.changeKey(3,app_key_3,default_key)
+            app_key_4=desfire.createKeySetting('44 55 66 77 88 99 AA BB CC DD EE FF 00 11 22 33',0,DESFireKeyType.DF_KEY_AES,[])
+            desfire.changeKey(4,app_key_4,default_key)
+            desfire.authenticate(0,app_key)
+            filePerm=DESFireFilePermissions()
+            filePerm.setPerm(0x04,0x03,0x0F,0x02) # key 4 read, key3 write, no key read and write, key2 change permissions
+            desfire.createStdDataFile(0,filePerm,32) # file Id 0, length 32 byte
+            desfire.authenticate(3,app_key_3)
+            desfire.writeFileData(0,0,32,'00 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20')
+            desfire.authenticate(4,app_key_4)
+            desfire.readFileData(0,0,32)
+
+
+
+
 
 
 

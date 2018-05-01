@@ -489,8 +489,7 @@ class DESFire:
     def createStdDataFile(self, fileId, filePermissions, fileSize):
          params=getList(fileId,1,'big')
          params+=[0x00]
-         params+=[filePermissions.pack()]
-         params+=[0x00]
+         params+=getList(filePermissions.pack(),2,'big')
          params+=getList(getInt(fileSize,'big'),3, 'little')
          apdu_command=self.command(DESFireCommand.DF_INS_CREATE_STD_DATA_FILE.value,params)
          self.communicate(apdu_command,'createStdDataFile', nativ=True, withTXCMAC=self.isAuthenticated)

@@ -392,14 +392,21 @@ class DESFireFilePermissions():
         self.ChangeAccess       = None
 
     def pack(self):
-        return (self.ReadAccess << 12) | (self.WriteAccess <<  8) | (self.ReadAndWriteAccess <<  4) | self.ChangeAccess;
-    
+        #return (self.ReadAccess << 12) | (self.WriteAccess <<  8) | (self.ReadAndWriteAccess <<  4) | self.ChangeAccess;
+        return (self.ReadAccess << 4) | (self.WriteAccess ) | (self.ReadAndWriteAccess <<  12) | (self.ChangeAccess << 8);
+ 
     def unpack(self, data):
         data=int.from_bytes(getBytes(data),byteorder='big')
-        self.ReadAccess         = bool((data >> 12) & 0x0F)
-        self.WriteAccess        = bool((data >>  8) & 0x0F)
-        self.ReadAndWriteAccess = bool((data >>  4) & 0x0F)
-        self.ChangeAccess       = bool((data      ) & 0x0F)
+        self.ReadAccess         = bool((data >>  4) & 0x0F)
+        self.WriteAccess        = bool((data      ) & 0x0F)
+        self.ReadAndWriteAccess = bool((data >> 12) & 0x0F)
+        self.ChangeAccess       = bool((data >>  8) & 0x0F)
+
+    def setPerm(self,r,w,rw,c):
+        self.ReadAccess         = r
+        self.WriteAccess        = w
+        self.ReadAndWriteAccess = rw
+        self.ChangeAccess       = c
 
     def __repr__(self):
         temp =  '----- DESFireFilePermissions ---\r\n'

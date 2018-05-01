@@ -160,7 +160,7 @@ def File():
         key_setting.setKey('10 18 20 28 30 38 40 48 50 58 60 68 70 78 80 88')
         desfire.authenticate(0,key_setting,'40 E7 D2 71 74 CB A6 75 E8 EF BA B9 9C 53 0E 3D')
         filePerm=DESFireFilePermissions()
-        filePerm.unpack('11')
+        filePerm.unpack('11 00')
         desfire.createStdDataFile(5,filePerm,80)
         desfire.getFileIDs()
         desfire.getFileSettings(5)
