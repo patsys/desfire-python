@@ -1,10 +1,7 @@
-pyDESFire
+DESFire
 =========
 
 Desfire card library for Python
-
-catedef wrapdef commanddef getApplicationIDsdef getKeySettingdef getCardVersiondef formatCarddef selectApplicationdef createApplicationdef deleteApplicationdef getFileIDsdef getFileSettingsdef readFileDatadef writeFileDatadef deleteFiledef createStdDataFiledef getKeyVersiondef changeKeySettingsdef changeKeydef createKeySetting
-=======
 
 Project still ongoing, use it with caution!
 
