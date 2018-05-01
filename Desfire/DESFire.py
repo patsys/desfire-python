@@ -350,9 +350,9 @@ class DESFire:
         Returns:
             None
         """
-        self.logger.debug('Selecting application with AppID %s' % (appid,))
+        appid = getList(appid,3,'big')
+        self.logger.debug('Selecting application with AppID %s' % (byte_array_to_human_readable_hex(appid),))
         
-        appid = bytearray.fromhex(appid)
         parameters =  [ appid[2], appid[1], appid[0] ]
         
 
@@ -373,9 +373,10 @@ class DESFire:
         Returns:
             None
         """
-        self.logger.debug('Creating application with appid: %s, ' %(appid))
-        appid = bytearray.fromhex(appid)
+        appid = getList(appid,3,'big')
+        self.logger.debug('Creating application with appid: %s, ' %(byte_array_to_human_readable_hex(appid)))
         appid = [appid[2],appid[1],appid[0]]
+        keycount=getInt(keycount,'big')
         params = appid + [calc_key_settings(keysettings)] + [keycount|type.value]
         cmd = DESFireCommand.DF_INS_CREATE_APPLICATION.value
         self.communicate(self.command(cmd, params),'cereate application',nativ=True, withTXCMAC=self.isAuthenticated)
@@ -388,9 +389,9 @@ class DESFire:
         Returns:
             None
         """
-        self.logger.debug('Deleting application for AppID %s', appid)
+        appid = getList(appid,3,'big')
+        self.logger.debug('Deleting application for AppID %s', byte_array_to_human_readable_hex(appid))
 
-        appid = bytearray.fromhex(appid)
         appid = [ appid[2], appid[1], appid[0] ]
 
         params = appid
@@ -433,10 +434,11 @@ class DESFire:
         Returns:
             DESFireFileSettings: An object describing all settings for the file
         """
-        self.logger.debug('Getting file settings for file %s' % (fileid,))
+        fileid=getList(fileid,1,'big')
+        self.logger.debug('Getting file settings for file %s' % (byte_array_to_human_readable_hex(fileid),))
 
         cmd = DESFireCommand.DF_INS_GET_FILE_SETTINGS.value
-        raw_data = raw_data = self.communicate(self.command(cmd, [fileid]),'Get File Settings',nativ=True, withTXCMAC=self.isAuthenticated)
+        raw_data = raw_data = self.communicate(self.command(cmd, fileid),'Get File Settings',nativ=True, withTXCMAC=self.isAuthenticated)
 
         file_settings = DESFireFileSettings()
         file_settings.parse(raw_data)
@@ -485,11 +487,11 @@ class DESFire:
          return self.communicate(self.command(DESFireCommand.DF_INS_DELETE_FILE.value, getList(fileId,1,'little')),'Delete File', nativ=True, withTXCMAC=self.isAuthenticated)
 
     def createStdDataFile(self, fileId, filePermissions, fileSize):
-         params=[fileId]
+         params=getList(fileId,1,'big')
          params+=[0x00]
          params+=[filePermissions.pack()]
          params+=[0x00]
-         params+=bytearray(bytes(fileSize.to_bytes(3, byteorder='little')))
+         params+=getList(getInt(fileSize,'big'),3, 'little')
          apdu_command=self.command(DESFireCommand.DF_INS_CREATE_STD_DATA_FILE.value,params)
          self.communicate(apdu_command,'createStdDataFile', nativ=True, withTXCMAC=self.isAuthenticated)
          return
@@ -509,7 +511,7 @@ class DESFire:
         """
         self.logger.debug('Getting key version for keyid %x' %(keyNo,))
 
-        params = [keyNo]
+        params = getList(keyNo,1,'big')
         cmd = DESFireCommand.DF_INS_GET_KEY_VERSION.value
         raw_data = self.communicate(self.command(cmd, params),'get key version',nativ=True, withTXCMAC=self.isAuthenticated)
         self.logger.debug('Got key version 0x%s for keyid %x' + str(keyNo))
@@ -524,7 +526,7 @@ class DESFire:
         Returns:
             None
         """
-        self.logger.debug('Changing key settings to %s' %('|'.join(a.name for a in newKeySettings),))
+        #self.logger.debug('Changing key settings to %s' %('|'.join(a.name for a in newKeySettings),))
         params = [calc_key_settings(newKeySettings)]
         cmd = DESFireCommand.DF_INS_CHANGE_KEY_SETTINGS.value
         raw_data = self.communicate(self.command(cmd,params),'change key settings', nativ=True, isEncryptedComm=True, withCRC=True)
@@ -542,6 +544,7 @@ class DESFire:
             None
         """
 
+        keyNo=getInt(keyNo,'big')
         self.logger.debug(' -- Changing key --')
         #self.logger.debug('Changing key No: %s from %s to %s' % (keyNo, newKey, curKey))
         if not self.isAuthenticated:
@@ -597,8 +600,8 @@ class DESFire:
 
     def createKeySetting(self,key, keyNumbers, keyType, keySettings):
         ret=DESFireKey()
-        ret.setKeySettings(keyNumbers,keyType,calc_key_settings(keySettings))
-        ret.setKey(bytearray.fromhex(key))
+        ret.setKeySettings(getInt(keyNumbers,'big'),keyType,calc_key_settings(keySettings))
+        ret.setKey(getList(key))
         return ret
 
 

@@ -74,7 +74,15 @@ class MyObserver(CardObserver):
             desfire.authenticate(0,default_key)
             desfire.changeKey(0,app_key,default_key)
             desfire.authenticate(0,app_key)
-            desfire.changeKeySettings([DESFireKeySettings.KS_ALLOW_CHANGE_MK,DESFireKeySettings.KS_CONFIGURATION_CHANGEABLE,DESFireKeySettings,DESFireKeySettings.KS_CHANGE_KEY_WITH_KEY_1])
+            desfire.changeKeySettings([ DESFireKeySettings.KS_ALLOW_CHANGE_MK, DESFireKeySettings.KS_CONFIGURATION_CHANGEABLE, DESFireKeySettings.KS_CHANGE_KEY_WITH_KEY_1])
+            app_key_1=desfire.createKeySetting('11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00',0,DESFireKeyType.DF_KEY_AES,[])
+            desfire.changeKey(1,app_key_1,default_key)
+            desfire.authenticate(1,app_key_1)
+            app_key_2=desfire.createKeySetting('22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00 11',0,DESFireKeyType.DF_KEY_AES,[])
+            desfire.changeKey(2,app_key_2,default_key)
+            desfire.authenticate(2,app_key_2)
+
+
 
 def main():
     global logger
