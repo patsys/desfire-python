@@ -36,7 +36,6 @@ Features
     -   getKeyVersion
     -   changeKeySettings
     -   changeKey
-    -   createKeySetting
 
 Issues
 ======
