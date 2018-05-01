@@ -23,10 +23,11 @@ class DESFireCommunicationError(Exception):
         self.status_code = status_code
 
 class DESFire:
-    isAuthenticated = False
-    sessionKey = None
-    cmac = None
     def __init__(self, device, logger=None):
+        self.isAuthenticated = False
+        self.sessionKey = None
+        self.cmac = None
+        self.MaxFrameSize=60
         """
         :param device: :py:class:`desfire.device.Device` implementation
         :param logger: Python :py:class:`logging.Logger` used for logging output. Overrides the default logger. Extensively uses ``INFO`` logging level.
@@ -189,7 +190,7 @@ class DESFire:
                 else:
                     # Need to loop more cycles to fill in receive buffer
                     additional_framing_needed = True
-                    apdu_cmd = [0xaf]  # Continue
+                    apdu_cmd = self.command(0xaf)  # Continue
             elif status != 0x00:
                 raise DESFireCommunicationError(DESFire_STATUS(status).name, status)
             else:
@@ -231,24 +232,24 @@ class DESFire:
             #after authentication, there is always an 8 bytes long CMAC coming from the card, to ensure message integrity
             #todo: verify CMAC
             if len(response) == 8:
-                if self.sessionKey.keyType == DESFireKeyType.DF_KEY_2K3DES or self.sessionKey.keyType == DESFireKeyType.DF_KEY_3K3DES:
-                    RXCMAC = response
-                    response = ''
-                else:
-                    #there is no CMAC
-                    return response
+                #if self.sessionKey.keyType == DESFireKeyType.DF_KEY_3DES or self.sessionKey.keyType == DESFireKeyType.DF_KEY_2K3DES or self.sessionKey.keyType == DESFireKeyType.DF_KEY_3K3DES:
+                RXCMAC = response
+                response = []
+                #else:
+                #    #there is no CMAC
+                #    return response
             else:
                 RXCMAC = response[-8:]
                 response = response[:-8]
 
-            if response == "":
-                response = []
+            #if response == "":
+            #    response = []
             cmacdata = response + [0x00]
             RXCMAC_CALC = self.sessionKey.CalculateCmac(cmacdata)
             self.logger.debug("RXCMAC      : " + byte_array_to_human_readable_hex(RXCMAC))
             self.logger.debug("RXCMAC_CALC: " + byte_array_to_human_readable_hex(RXCMAC_CALC))
             self.cmac=RXCMAC_CALC
-            if bytes(RXCMAC) != bytes(RXCMAC_CALC):
+            if bytes(RXCMAC) != bytes(RXCMAC_CALC[0:len(RXCMAC)]):
                 raise Exception("RXCMAC not equal")
 
         return response
@@ -414,13 +415,13 @@ class DESFire:
         fileIDs = []
 
         cmd = DESFireCommand.DF_INS_GET_FILE_IDS.value
-        raw_data = self.communicate([cmd], 'get File ID\'s',native=True, withTXCMAC=self.isAuthenticated)
+        raw_data = self.communicate([cmd], 'get File ID\'s',nativ=True, withTXCMAC=self.isAuthenticated)
         if len(raw_data) == 0:
             self.logger.debug("No files found")
         else:
             for byte in raw_data:
-                fileIDs.append(hex2int(byte))
-            self.logger.debug("File ids: %s" % (''.join([str(id) for id in fileIDs]),))
+                fileIDs.append(byte)
+            self.logger.debug("File ids: %s" % (''.join([byte_array_to_human_readable_hex(bytearray([id])) for id in fileIDs]),))
         return fileIDs
 
     def getFileSettings(self, fileid):
@@ -435,13 +436,13 @@ class DESFire:
         self.logger.debug('Getting file settings for file %s' % (fileid,))
 
         cmd = DESFireCommand.DF_INS_GET_FILE_SETTINGS.value
-        raw_data = raw_data = self.communicate(self.command(cmd, fileid),getFileSettings,native=True, withTXCMAC=self.isAuthenticated)
+        raw_data = raw_data = self.communicate(self.command(cmd, [fileid]),'Get File Settings',nativ=True, withTXCMAC=self.isAuthenticated)
 
         file_settings = DESFireFileSettings()
         file_settings.parse(raw_data)
         return file_settings
 
-    def readFileData(self,fileid):
+    def readFileData(self,fileId,offset,length):
         """Read file data for fileID (SelectApplication needs to be called first)
         Authentication is NOT ALWAYS needed to call this function. Depends on the application/card settings.
         Args:
@@ -449,17 +450,51 @@ class DESFire:
         Returns:
             str: the file data bytes
         """
-        self.logger.debug('Reading file data for file %s' % (fileid,))
+        fileId=getList(fileId,1)
+        offset=getInt(offset,'big')
+        length=getInt(length,'big')
+        ioffset=0
+        ret=[]
+        
+        while (length > 0):
+            count=min(length, 48)
+            cmd=DESFireCommand.DF_INS_READ_DATA.value
+            params=fileId+getList(offset+ioffset,3,'little')+getList(count,3,'little')
+            ret+=self.communicate(self.command(cmd, params),'Read file data', nativ=True, withTXCMAC=self.isAuthenticated)
+            ioffset+=count
+            length-=count
+        
+        return ret
 
-        parameters = [fileid] + [0x00]*6
-        cmd = DESFireCommand.DF_INS_READ_DATA.value
+    def writeFileData(self,fileId,offset,length,data):
+        fileId=getList(fileId,1)
+        offset=getInt(offset,'big')
+        length=getInt(length,'big')
+        data=getList(data)
+        ioffset=0
+        
+        while (length > 0):
+            count=min(length, self.MaxFrameSize-8)
+            cmd=DESFireCommand.DF_INS_WRITE_DATA.value
+            params=fileId+getList(offset+ioffset,3,'little')+getList(count,3,'little')+data[ioffset:(ioffset+count)]
+            self.communicate(self.command(cmd, params),'write file data', nativ=True, withTXCMAC=self.isAuthenticated)
+            ioffset+=count
+            length-=count
 
-        buffer = self.communicate(selft.command(cmd, parameters),'read file data', native=True, withTXCMAC=self.isAuthenticated)
-        self.logger.debug('File %s Data: ' % (fileid,bytelist2hex(buffer)))
+    def deleteFile(self,fileId):
+         return self.communicate(self.command(DESFireCommand.DF_INS_DELETE_FILE.value, getList(fileId,1,'little')),'Delete File', nativ=True, withTXCMAC=self.isAuthenticated)
 
-        return buffer
-
-
+    def createStdDataFile(self, fileId, filePermissions, fileSize):
+         params=[fileId]
+         params+=[0x00]
+         params+=[filePermissions.pack()]
+         params+=[0x00]
+         params+=bytearray(bytes(fileSize.to_bytes(3, byteorder='little')))
+         apdu_command=self.command(DESFireCommand.DF_INS_CREATE_STD_DATA_FILE.value,params)
+         self.communicate(apdu_command,'createStdDataFile', nativ=True, withTXCMAC=self.isAuthenticated)
+         return
+    
+    
     ###### CRYPTO KEYS RELATED FUNCTIONS
 
 
@@ -558,7 +593,7 @@ class DESFire:
 
 
 #######################################################################################################################################
-### Helper funcion
+### Helper function
 #######################################################################################################################################
 
     def createKeySetting(self,key, keyNumbers, keyType, keySettings):

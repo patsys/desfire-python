@@ -161,6 +161,13 @@ class DESFireKeySettings(Enum):
     # -------------------------------------
     KS_FACTORY_DEFAULT                = 0x0F
 
+class DESFireFileType(Enum):
+
+    MDFT_STANDARD_DATA_FILE             = 0x00
+    MDFT_BACKUP_DATA_FILE               = 0x01 # not implemented
+    MDFT_VALUE_FILE_WITH_BACKUP         = 0x02 # not implemented
+    MDFT_LINEAR_RECORD_FILE_WITH_BACKUP = 0x03 # not implemented
+    MDFT_CYCLIC_RECORD_FILE_WITH_BACKUP = 0x04 # not implemented
 
 class DESFireKeySet:
      master=DESFireKeySettings.KS_FACTORY_DEFAULT
@@ -168,6 +175,11 @@ class DESFireKeySet:
      def __repr__(self):
          return 'master:' + master.name + "\nchange:" + change.name
 
+class DESFireFileEncryption(Enum):
+
+    CM_PLAIN   = 0x00
+    CM_MAC     = 0x01   # not implemented (Plain data transfer with additional MAC)
+    CM_ENCRYPT = 0x03   # not implemented (Does not make data stored on the card more secure. Only encrypts the transfer between Teensy and the card)
 class DESFireKey():
     def __init__(self):
         self.keyType = None
@@ -284,7 +296,7 @@ class DESFireKey():
 
             #c=self.chiperMode.new(bytes(self.keyBytes), self.chiperMode.MODE_CBC, bytes(self.IV))
             print('crypt:',byte_array_to_human_readable_hex(data[encryptBegin:]))
-            ret = bytearray(data[0:encryptBegin])+self.cmac.Encrypt(data[encryptBegin:])
+            ret = list(bytearray(data[0:encryptBegin])+self.cmac.Encrypt(data[encryptBegin:]))
             #self.GenerateCmac()
             #self.CalculateCmac(bytearray(data))
             return ret  
@@ -387,6 +399,7 @@ class DESFireFilePermissions():
         return (self.ReadAccess << 12) | (self.WriteAccess <<  8) | (self.ReadAndWriteAccess <<  4) | self.ChangeAccess;
     
     def unpack(self, data):
+        data=int.from_bytes(getBytes(data),byteorder='big')
         self.ReadAccess         = bool((data >> 12) & 0x0F)
         self.WriteAccess        = bool((data >>  8) & 0x0F)
         self.ReadAndWriteAccess = bool((data >>  4) & 0x0F)
@@ -440,17 +453,17 @@ class DESFireFileSettings:
         self.CurrentNumberRecords = None        #uint32_t
 
     def parse(self, data):
-        self.FileType   = DESFireFileType(hex2int(data[0]))
-        self.Encryption = DESFireFileEncryption(hex2int(data[1]))
-        self.Permissions.unpack(struct.unpack('>H',data[2:4])[0])
+        self.FileType   = DESFireFileType(data[0])
+        self.Encryption = DESFireFileEncryption(data[1])
+        self.Permissions.unpack(struct.unpack('>H',bytes(data[2:4]))[0])
         
         if self.FileType == DESFireFileType.MDFT_LINEAR_RECORD_FILE_WITH_BACKUP:
-            self.RecordSize = struct.unpack('<I', data[4:6] + '\x00\x00')[0]  
-            self.MaxNumberRecords = struct.unpack('<I', data[6:8] + '\x00\x00')[0]
-            self.CurrentNumberRecords = struct.unpack('<I', data[8:10] + '\x00\x00')[0]
+            self.RecordSize = struct.unpack('<I', bytes(data[4:6] + [0x00,0x00]))[0]  
+            self.MaxNumberRecords = struct.unpack('<I', bytes(data[6:8] + [0x00,0x00]))[0]
+            self.CurrentNumberRecords = struct.unpack('<I', bytes(data[8:10] + [0x00,0x00]))[0]
 
         elif self.FileType == DESFireFileType.MDFT_STANDARD_DATA_FILE:
-            self.FileSize = struct.unpack('<I', data[4:6] + '\x00\x00')[0]
+            self.FileSize = self.FileSize = struct.unpack('<I', bytes(data[4:6] + [0x00,0x00]))[0]
 
 
         else:
