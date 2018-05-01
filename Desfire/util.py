@@ -29,6 +29,8 @@ def getList(data,byteSize=2,byteorder='big'):
         return list(data)
     elif isinstance(data, int):
         return list(data.to_bytes(byteSize, byteorder=byteorder))
+    elif isinstance(data,bytes):
+        return list(data)
     return data
      
 
