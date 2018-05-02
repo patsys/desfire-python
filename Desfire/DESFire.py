@@ -168,8 +168,7 @@ class DESFire:
         # TODO: Clean this up so readgwrite implementations have similar mechanisms and all continue is handled internally
         while additional_framing_needed:
 
-            apdu_cmd_hex = [hex(c) for c in apdu_cmd]
-            self.logger.debug("Running APDU command %s, sending: %s", description, apdu_cmd_hex)
+            self.logger.debug("Running APDU command %s, sending: %s", description, byte_array_to_human_readable_hex(apdu_cmd))
 
             resp = self.device.transceive(apdu_cmd)
             self.logger.debug("Received APDU response: %s", byte_array_to_human_readable_hex(resp))
