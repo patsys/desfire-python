@@ -417,7 +417,7 @@ class DESFireCardVersion():
 
     def toDict(self):
          temp = {}
-         temp['rawBytes']            = self.rawByte
+         temp['rawBytes']            = self.rawBytes
          temp['hardwareVendorId']    = self.hardwareVendorId
          temp['hardwareType']        = self.hardwareType
          temp['hardwareSubType']     = self.hardwareSubType
