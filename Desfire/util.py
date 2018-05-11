@@ -22,9 +22,9 @@ def getInt(data,byteorder='big'):
         return data
     if isinstance(data,str):
         data=bytearray.fromhex(data)
-    if isinstance(ndata,bytearray):
+    if isinstance(data,bytearray):
         data=bytes(data)
-    return int.from_bytes(data, byteorder='byteorder')
+    return int.from_bytes(data, byteorder=byteorder)
 
 def getList(data,byteSize=2,byteorder='big'):
     if isinstance(data, str):
