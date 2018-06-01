@@ -7,7 +7,7 @@ setup(
 	license='MIT',
 	description='DESFire library for python',
 	long_description=open('README.txt').read(),
-	install_requires=['pycrypto','enum34','pyscard'],
+	install_requires=['pycrypto','enum34','pyscard','pydes'],
 	url='https://github.com/patsys/desfire-python',
 	author='Patrick Weber',
 	author_email='pat.weber91@gmail.com'
