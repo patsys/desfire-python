@@ -14,3 +14,11 @@ Session.vim
 # Auto-generated tag files
 tags
 
+# VSCode-Settings
+.vscode
+
+# Build files
+DESFfire.egg-info/*
+build
+dist
+

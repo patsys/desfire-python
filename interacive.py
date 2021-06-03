@@ -82,10 +82,17 @@ class MyObserver(CardObserver):
 41. Get key settings
 42. Change key settings
 ----------------------------
-50. Craete file
+50. Create file
 51. List files 
 52. Write file
 53. Read file
+----------------------------
+60. Create wallet
+61. Debit wallet
+62. Credit wallet
+63. Commit transactions
+64. Get wallet value
+----------------------------
 90. Exit
 """))
                 if num == 90:
@@ -116,6 +123,16 @@ class MyObserver(CardObserver):
                     self.writeFile()
                 elif num == 53:
                     self.readFile()
+                elif num == 60:
+                    self.createWallet()
+                elif num == 61:
+                    self.debitWallet()
+                elif num == 62:
+                    self.creditWallet()
+                elif num == 63:
+                    self.commitTransaction()
+                elif num == 64:
+                    self.getWalletValue()
 
     def auth(self):
         key=self.desfire.getKeySetting()
@@ -179,14 +196,31 @@ class MyObserver(CardObserver):
 
     def createFile(self):
         filePerm=DESFireFilePermissions()
-        filePerm.setPerm(int(input('Read key number: ')),int(intput('Write key number')),int(input('read/write key number: ')),int(input('Change permmision key number: '))) # key 4 read, key3 write, no key read and write, key2 change permissions
-        self.desfire.createStdDataFile(int(input('File id: ')),filePerm,int(input('File lenght: '))) # file Id 0, length 32 byte
+        filePerm.setPerm(int(input('Read key number: ')),int(intput('Write key number')),int(input('read/write key number: ')),int(input('Change permmision key number: ')))
+        self.desfire.createStdDataFile(int(input('File id: ')),filePerm,int(input('File lenght: ')))
 
     def writeFile(self):
         self.desfire.writeFileData(int(input('File id: ')),int(input('Offset')),int(input('Length: ')),input('Data: '))
 
     def readFile(self):
         print(byte_array_to_human_readable_hex(self.desfire.readFileData(int(input('File id: ')),int(input('Offset')),int(input('Length: ')))))
+
+    def createWallet(self):
+        filePerm=DESFireFilePermissions()
+        filePerm.setPerm(0x0F,0x0F,int(input('read/write key number: ')),int(input('Change permmision key number: ')))
+        self.desfire.createValueFile(int(input('File id: ')),filePerm)
+    
+    def debitWallet(self):
+        self.desfire.debit(int(input('File id: ')),int(input('Amount: ')))
+
+    def creditWallet(self):
+        self.desfire.credit(int(input('File id: ')),int(input('Amount: ')))
+    
+    def commitTransaction(self):
+        self.desfire.commitTransaction()
+    
+    def getWalletValue(self):
+        print('Value: %d',self.desfire.getValue(int(input('File id: '))))
 
     def getFileSettings(self):
         self.desfire.getFileSettings(int(input('File id: ')))
